@@ -1,1 +1,6 @@
-hypothesis==6.170.0
+# Backend and development. The sandbox image installs only sandbox/requirements.txt.
+-r sandbox/requirements.txt
+fastapi==0.143.2
+uvicorn==0.54.0
+pyflakes==4.0.3
+httpx2==2.13.1  # tests (FastAPI TestClient)

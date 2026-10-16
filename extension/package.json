@@ -1,0 +1,73 @@
+{
+  "name": "phanthom",
+  "displayName": "Phanthom",
+  "description": "Finds bugs in Python while you type, and backs each one with a failing input.",
+  "version": "0.1.0",
+  "publisher": "phanthom",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:python"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "phanthom.analyze",
+        "title": "Phanthom: Analyse This File Now"
+      },
+      {
+        "command": "phanthom.replay",
+        "title": "Phanthom: Replay Failing Input"
+      },
+      {
+        "command": "phanthom.showOutput",
+        "title": "Phanthom: Show Output"
+      }
+    ],
+    "configuration": {
+      "title": "Phanthom",
+      "properties": {
+        "phanthom.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Analyse Python files while you type."
+        },
+        "phanthom.backendUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8765",
+          "description": "Address of the Phanthom backend (python -m backend)."
+        },
+        "phanthom.debounceMs": {
+          "type": "number",
+          "default": 700,
+          "minimum": 100,
+          "description": "How long to wait after you stop typing before analysing."
+        },
+        "phanthom.shadowRun": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run each function on generated inputs in the sandbox to find confirmed, reproducible bugs."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test out/test/*.test.js",
+    "test:integration": "npm run compile && node out/test/integration/run.js"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/vscode": "1.100.0",
+    "@vscode/test-electron": "3.1.0",
+    "typescript": "7.0.2"
+  }
+}

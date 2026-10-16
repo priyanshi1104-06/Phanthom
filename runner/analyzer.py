@@ -4,10 +4,10 @@
 failing input, fails the same way again. Everything else is reported as what it is.
 
 A finding (the repro format later layers build on):
-    {"function": "average", "status": "bug", "examples": 3,
+    {"function": "average", "def_line": 8, "status": "bug", "examples": 3,
      "input": {"args": [[]], "call": "average([])"},
      "failure": {"kind": "exception", "error": "ZeroDivisionError", "message": "division by zero",
-                 "line": 12, "traceback": "..."}}
+                 "line": 10, "traceback": "..."}}
 status: "bug"          - failing input found and reproduced in a fresh worker
         "unconfirmed"  - something failed, but the replay did not fail the same way (or couldn't run)
         "no_bug_found" - every generated input passed (not proof that there is no bug)
@@ -17,20 +17,15 @@ status: "bug"          - failing input found and reproduced in a fresh worker
 import ast
 from concurrent.futures import ThreadPoolExecutor
 
+from runner.context import function_context, missing_context, public_functions, top_level_names
 from runner.executor import run_job
 
 FUZZ_TIMEOUT = 60.0  # seconds for a whole fuzz job
 REPLAY_TIMEOUT = 5.0  # seconds for replaying one input
 
 
-def find_functions(source):
-    """Names of the public top-level functions, found by parsing (not running) the source."""
-    tree = ast.parse(source)
-    return [node.name for node in tree.body
-            if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")]
-
-
 def analyze_function(source, func_name, sandbox="local", max_examples=200, call_timeout=1.0):
+    """Fuzz func_name, the source being everything it needs to run (see runner.context)."""
     finding = {"function": func_name}
     result = run_job({"mode": "fuzz", "source": source, "func_name": func_name,
                       "max_examples": max_examples, "call_timeout": call_timeout},
@@ -42,7 +37,7 @@ def analyze_function(source, func_name, sandbox="local", max_examples=200, call_
     if result["status"] != "bug":
         return {**finding, **result}
 
-    replay = replay_input(source, func_name, result["input"], sandbox, call_timeout)
+    replay = replay_input(source, func_name, result["input"].get("args"), sandbox, call_timeout)
     failure = result["failure"]
     same = (replay.get("ok") is False and replay.get("kind") == failure["kind"]
             and replay.get("error") == failure["error"])
@@ -53,19 +48,33 @@ def analyze_function(source, func_name, sandbox="local", max_examples=200, call_
     return finding
 
 
-def replay_input(source, func_name, failing_input, sandbox, call_timeout=1.0):
+def replay_input(source, func_name, args, sandbox, call_timeout=1.0):
     """Run the function once more, in a fresh worker, with just the failing input."""
-    if failing_input.get("args") is None:
+    if args is None:
         return {"ok": None, "message": "input can't be sent to a worker exactly, so it wasn't replayed"}
     return run_job({"mode": "call", "source": source, "func_name": func_name,
-                    "args": failing_input["args"], "call_timeout": call_timeout},
+                    "args": args, "call_timeout": call_timeout},
                    timeout=REPLAY_TIMEOUT, sandbox=sandbox)
 
 
-def analyze_source(source, functions=None, sandbox="local", max_examples=200, jobs=4):
+def analyze_in_file(source, tree, func_name, analyze=analyze_function, **options):
+    """Analyse one function of a file: cut out its context, fuzz it, sanity-check the result.
+    `analyze` is analyze_function or a cached wrapper with the same signature."""
+    finding = analyze(function_context(source, func_name, tree), func_name, **options)
+    name = missing_context(finding, top_level_names(tree))
+    if name:
+        finding = {"function": func_name, "status": "skipped",
+                   "reason": f"needs {name!r}, which the file defines in a way Phanthom can't extract yet"}
+    return {**finding, "def_line": public_functions(tree).get(func_name)}
+
+
+def analyze_source(source, functions=None, sandbox="local", max_examples=200, jobs=4,
+                   analyze=analyze_function):
     """Findings for every public function in `source` (or just `functions`), in source order."""
-    names = functions or find_functions(source)
+    tree = ast.parse(source)
+    names = functions or list(public_functions(tree))
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         return list(pool.map(
-            lambda name: analyze_function(source, name, sandbox=sandbox, max_examples=max_examples),
+            lambda name: analyze_in_file(source, tree, name, analyze,
+                                         sandbox=sandbox, max_examples=max_examples),
             names))

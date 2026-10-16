@@ -2,7 +2,7 @@
 # Build from the repo root:  docker build -f sandbox/Dockerfile -t phanthom-sandbox .
 # runner/executor.py adds the lockdown at run time: no network, memory cap, read-only filesystem.
 FROM python:3.14-slim
-COPY requirements.txt /app/requirements.txt
+COPY sandbox/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY worker.py /app/worker.py
 # (runner/executor.py mounts the current worker.py over this copy at run time)
