@@ -124,8 +124,8 @@ READY_TTL = 30  # seconds: an image pulled while the backend runs is noticed thi
 
 
 def language_sandbox(lang):
-    """"docker" when the language's image is present, "local" when only its toolchain is on PATH, else None.
-    PHANTOM_SANDBOX=docker or =local allows only that one."""
+    """"docker" when the language's image is present, else None. A plain local process (no memory cap)
+    only when asked for with PHANTOM_SANDBOX=local, or for Python, whose worker caps its own memory and CPU."""
     requested = os.environ.get("PHANTOM_SANDBOX", "auto")
     checked, found = _ready_cache.get((lang.name, requested), (None, None))
     if checked is not None and time.monotonic() - checked < READY_TTL:
@@ -134,7 +134,8 @@ def language_sandbox(lang):
     if requested in ("auto", "docker") and shutil.which("docker") and subprocess.run(
             ["docker", "image", "inspect", lang.image], capture_output=True).returncode == 0:
         found = "docker"
-    elif requested in ("auto", "local") and lang.local_tool and shutil.which(lang.local_tool):
+    elif (requested == "local" or (requested == "auto" and lang.name == "python")) and lang.local_tool \
+            and shutil.which(lang.local_tool):
         found = "local"
     _ready_cache[(lang.name, requested)] = (time.monotonic(), found)
     return found
