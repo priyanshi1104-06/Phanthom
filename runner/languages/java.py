@@ -9,8 +9,9 @@ Each argument is assigned to a local of the parameter's declared type before the
 constant compiles, overloads resolve to the declared signature, and a model input of the wrong type
 fails the build (Specter then drops it). Building an argument that throws (List.of(null), duplicate
 Map.of keys) is reported as "bad_input", never as a bug. A watchdog thread samples the main thread
-before the time limit, so an infinite loop is reported at the line of the loop it is stuck in. Collections are passed as
-mutable copies (new ArrayList<>(List.of(...))), so a method that sorts its argument isn't "buggy".
+before the time limit, so an infinite loop is reported at the line of the loop it is stuck in.
+Collections are passed as mutable copies (new ArrayList<>(List.of(...))), so a method that sorts its
+argument isn't "buggy".
 """
 import re
 from dataclasses import dataclass
@@ -157,7 +158,8 @@ class Java(Language):
             elif child.type == "spread_parameter":
                 skip = "varargs methods are not run yet"
                 declarator = next((c for c in child.named_children if c.type == "variable_declarator"), None)
-                kind = next((c for c in child.named_children if c.type not in ("modifiers", "variable_declarator")), None)
+                kind = next((c for c in child.named_children
+                             if c.type not in ("modifiers", "variable_declarator")), None)
                 name = declarator.child_by_field_name("name") if declarator is not None else None
                 params.append(Param(self.text(name) or "args", f"{self.text(kind)}..."))
         returns = node.child_by_field_name("type")
@@ -177,7 +179,7 @@ class Java(Language):
             non_null=any(NON_NULL.fullmatch(m) for m in mods))
 
     def context(self, source, fn):
-        """The file without its `package` line (blanked, so line numbers stay): the harness is in the default package."""
+        """The file without its `package` line (blanked, so line numbers stay): it joins the harness's package."""
         kinds = {node.type for node in self.parse(source).root_node.named_children} - {"package_declaration"}
         return self.blank_top_level(source, kinds)
 
@@ -201,8 +203,8 @@ class Java(Language):
             return tree, None
 
     def literal_ok(self, expr):
-        # javac turns " into a quote before it reads a string, so ""+System.exit(1)+"" would
-        # be a string to tree-sitter but code to javac: no unicode escapes at all.
+        # javac turns \u0022 into a quote before it reads a string, so "\u0022+System.exit(1)+\u0022" is
+        # a string to tree-sitter but code to javac: no unicode escapes at all.
         return "\\u" not in (expr or "") and super().literal_ok(expr)
 
     def _literal_node(self, node):
@@ -386,7 +388,8 @@ class Java(Language):
         inputs = {}
         for row in rows:
             assumptions = [v.assumption for v in row if v.assumption]
-            sequences = [(p.name, v.size) for p, v in zip(params, row) if v.kind in ("array", "list") and v.size is not None]
+            sequences = [(p.name, v.size) for p, v in zip(params, row)
+                         if v.kind in ("array", "list") and v.size is not None]
             if len({size for _, size in sequences}) > 1:
                 assumptions.append(f"{' and '.join(name for name, _ in sequences)} may have different lengths")
             inputs.setdefault(tuple(v.expr for v in row), Input([v.expr for v in row], assumptions=assumptions))
@@ -415,7 +418,8 @@ class Java(Language):
         if node.type == "unary_expression":
             return self._extreme(node.child_by_field_name("operand"))
         if node.type == "field_access":
-            return self.text(node).endswith(("MAX_VALUE", "MIN_VALUE")) and not self.text(node).startswith(("Double", "Float"))
+            text = self.text(node)
+            return text.endswith(("MAX_VALUE", "MIN_VALUE")) and not text.startswith(("Double", "Float"))
         if node.type in NUMBERS and "floating" not in node.type:
             digits = self.text(node).replace("_", "").rstrip("lL")
             try:
@@ -443,14 +447,11 @@ class Java(Language):
         cases = "\n".join(self._case(fn, index, inp, owner) for index, inp in enumerate(inputs))
         loops = ",".join(f"{n.start_point[0] + 1}-{n.end_point[0] + 1}"
                          for n in walk(self.parse(source).root_node) if n.type in LOOPS)
-        harness = (TEMPLATE.replace("__FILE__", json_string(f"{user}.java"))
-                   .replace("__LIMIT__", str(int(WATCHDOG * 1000)))
-                   .replace("__TIMEOUT__", json_string(f"no result after {WATCHDOG:g} s (possible infinite loop)"))
-                   .replace("__LOOPS__", json_string(loops))
-                   .replace("__NONNULL__", "true" if getattr(fn, "non_null", False) else "false")
-                   .replace("__MARK__", json_string("\n" + CALL_MARK + "\n"))
-                   .replace("__RESULT__", json_string("\n" + RESULT_MARK))
-                   .replace("__CASES__", cases))
+        values = {"FILE": json_string(f"{user}.java"), "LIMIT": str(int(WATCHDOG * 1000)), "LOOPS": json_string(loops),
+                  "TIMEOUT": json_string(f"no result after {WATCHDOG:g} s (possible infinite loop)"),
+                  "NONNULL": "true" if getattr(fn, "non_null", False) else "false",
+                  "MARK": json_string(f"\n{CALL_MARK}\n"), "RESULT": json_string(f"\n{RESULT_MARK}"), "CASES": cases}
+        harness = re.sub(r"__([A-Z]+)__", lambda m: values[m.group(1)], TEMPLATE)  # one pass: inputs aren't rescanned
         return {"files": {f"{user}.java": source, f"{HARNESS}.java": harness},
                 "build": f"javac {JAVAC} -d . '{user}.java' {HARNESS}.java", "run": RUN}
 
@@ -467,7 +468,7 @@ class Java(Language):
                     f"new Class<?>[]{{{classes}}}, new Object[]{{{', '.join(names)}}})")
         else:
             call = f"{fn.name}({', '.join(names)})"
-        lines.append(f"                {call}; return VOID;" if fn.returns == "void" else f"                return {call};")
+        lines.append(" " * 16 + (f"{call}; return VOID;" if fn.returns == "void" else f"return {call};"))
         return "\n".join(lines + ["            }"])
 
     def classify(self, code, out, err):
@@ -542,7 +543,7 @@ def walk(node):
             yield from walk(child)
 
 
-TEMPLATE = r"""import java.util.*;
+TEMPLATE = r"""import java.util.*; // for the inputs; the harness itself names java.util types in full
 
 public final class PhantomHarness {
     static final String USER_FILE = __FILE__;
@@ -647,25 +648,26 @@ __CASES__
     // The line to blame for a hang: in the deepest user frame that every sample shares (the method that
     // loops, not the helpers it calls), the first line of the innermost loop around every sampled line.
     static int loopLine(StackTraceElement[][] samples) {
-        List<List<StackTraceElement>> stacks = new ArrayList<>();
+        java.util.List<java.util.List<StackTraceElement>> stacks = new java.util.ArrayList<>();
         for (StackTraceElement[] sample : samples) {
-            List<StackTraceElement> frames = new ArrayList<>();
+            java.util.List<StackTraceElement> frames = new java.util.ArrayList<>();
             for (int k = sample.length - 1; k >= 0; k--) if (user(sample[k])) frames.add(sample[k]);
             stacks.add(frames);
         }
         int depth = 0;
         search:
         while (true) {
-            for (List<StackTraceElement> frames : stacks) {
+            for (java.util.List<StackTraceElement> frames : stacks) {
                 if (frames.size() <= depth) break search;
                 StackTraceElement a = frames.get(depth), b = stacks.get(0).get(depth);
-                if (!a.getClassName().equals(b.getClassName()) || !a.getMethodName().equals(b.getMethodName())) break search;
+                boolean same = a.getClassName().equals(b.getClassName()) && a.getMethodName().equals(b.getMethodName());
+                if (!same) break search;
             }
             depth++;
         }
         if (depth == 0) return -1;
         int low = Integer.MAX_VALUE, high = 0, best = -1, width = Integer.MAX_VALUE;
-        for (List<StackTraceElement> frames : stacks) {
+        for (java.util.List<StackTraceElement> frames : stacks) {
             low = Math.min(low, frames.get(depth - 1).getLineNumber());
             high = Math.max(high, frames.get(depth - 1).getLineNumber());
         }
@@ -686,6 +688,18 @@ __CASES__
     }
 
     static int userLine(Throwable e) {
+        if (e instanceof StackOverflowError) {
+            // the top frame lands on the call or on the callee's first line at random: blame the recursive call,
+            // the user line most of the 1024 recorded frames are at
+            java.util.Map<Integer, Integer> counts = new java.util.HashMap<>();
+            int best = -1;
+            for (StackTraceElement frame : e.getStackTrace()) {
+                if (!user(frame) || frame.getLineNumber() <= 0) continue;
+                int seen = counts.merge(frame.getLineNumber(), 1, Integer::sum);
+                if (best < 0 || seen > counts.get(best)) best = frame.getLineNumber();
+            }
+            if (best > 0) return best;
+        }
         int depth = 0;
         for (Throwable t = e; t != null && depth < 5; t = t.getCause(), depth++) {
             for (StackTraceElement frame : t.getStackTrace()) {
@@ -721,17 +735,17 @@ __CASES__
             String s;
             if (v == VOID) s = "void";
             else if (v == null) s = "null";
-            else if (v instanceof String) s = q((String) v);
+            else if (v instanceof String) s = quote((String) v, false);
             else if (v instanceof Character) s = "'" + v + "'";
-            else if (v instanceof Object[]) s = Arrays.deepToString((Object[]) v);
-            else if (v instanceof int[]) s = Arrays.toString((int[]) v);
-            else if (v instanceof long[]) s = Arrays.toString((long[]) v);
-            else if (v instanceof double[]) s = Arrays.toString((double[]) v);
-            else if (v instanceof float[]) s = Arrays.toString((float[]) v);
-            else if (v instanceof short[]) s = Arrays.toString((short[]) v);
-            else if (v instanceof byte[]) s = Arrays.toString((byte[]) v);
-            else if (v instanceof char[]) s = Arrays.toString((char[]) v);
-            else if (v instanceof boolean[]) s = Arrays.toString((boolean[]) v);
+            else if (v instanceof Object[]) s = java.util.Arrays.deepToString((Object[]) v);
+            else if (v instanceof int[]) s = java.util.Arrays.toString((int[]) v);
+            else if (v instanceof long[]) s = java.util.Arrays.toString((long[]) v);
+            else if (v instanceof double[]) s = java.util.Arrays.toString((double[]) v);
+            else if (v instanceof float[]) s = java.util.Arrays.toString((float[]) v);
+            else if (v instanceof short[]) s = java.util.Arrays.toString((short[]) v);
+            else if (v instanceof byte[]) s = java.util.Arrays.toString((byte[]) v);
+            else if (v instanceof char[]) s = java.util.Arrays.toString((char[]) v);
+            else if (v instanceof boolean[]) s = java.util.Arrays.toString((boolean[]) v);
             else s = String.valueOf(v);
             return clip(s, 300);
         } catch (Throwable e) {
@@ -744,13 +758,17 @@ __CASES__
     }
 
     static String q(String s) {
+        return quote(s, true); // pure ASCII on stdout, whatever the container's locale
+    }
+
+    static String quote(String s, boolean ascii) {
         StringBuilder b = new StringBuilder("\"");
         for (int k = 0; k < s.length(); k++) {
             char c = s.charAt(k);
             if (c == '"' || c == '\\') b.append('\\').append(c);
             else if (c == '\n') b.append("\\n");
             else if (c == '\t') b.append("\\t");
-            else if (c < 0x20 || c > 0x7e) b.append(String.format("\\%s%04x", "u", (int) c));
+            else if (c < 0x20 || c == 0x7f || ascii && c > 0x7e) b.append(String.format("\\%s%04x", "u", (int) c));
             else b.append(c);
         }
         return b.append('"').toString();

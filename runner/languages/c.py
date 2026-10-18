@@ -6,14 +6,13 @@ one function per input and a main that runs input number argv[1]. The verdict pr
 C++ throw hook live in a second translation unit (phantom_rt), so their #includes can't clash with
 names in the user's code. A run that dies without a verdict is classified from the sanitizer report
 (heap-buffer-overflow, signed integer overflow, null pointer dereference, stack-overflow...), at the
-innermost user.c frame. C++ exceptions report their type, what() and the stack at the throw.
+innermost user.c frame. C++ (cpp.py) builds on this plugin.
 
 Inputs are literals. Arrays are compound literals, (int[]){1, 2, 3} or (char[]){"abc"}; the harness
 copies every array argument to a heap block of exactly its size, so one element too far is caught
 and string literals are writable. A pointer and its length parameter (values, count) change
 together, so an input never claims more elements than it has. NULL, extreme integers (INT_MAX) and
-arrays whose length nothing states carry assumptions. C++ adds std::string, std::vector<T> and
-braced lists.
+arrays whose length nothing states carry assumptions.
 """
 import re
 
@@ -34,7 +33,7 @@ INTS = {  # canonical integer type -> (signed, MIN macro, MAX macro)
 }
 LIMITS = frozenset(m for _, low, high in INTS.values() for m in (low, high) if m)
 FLOATS = ("float", "double", "long double")
-QUALIFIERS = ("const", "volatile", "restrict", "__restrict", "register", "struct_none")
+QUALIFIERS = ("const", "volatile", "restrict", "__restrict", "register")
 INT_WORDS = {"signed", "unsigned", "short", "long", "int", "char", "double"}
 LENGTH_WORDS = {"n", "len", "length", "count", "cnt", "size", "sz", "num", "nelem", "nelems", "nmemb", "nitems",
                 "cap", "capacity"}
@@ -82,7 +81,7 @@ class C(Language):
     literal_hint = ("numbers (also -1, 1.5, 0x1F), 'c' chars, \"strings\", true/false, NULL, limit macros "
                     "such as INT_MAX or SIZE_MAX, and arrays as compound literals: (int[]){1, 2, 3}, "
                     "(char[]){\"abc\"}, (const char *[]){\"a\", \"b\"}")
-    compiler = ("gcc -std=gnu17 -g -O0 -fno-omit-frame-pointer -fsanitize=address,undefined "
+    compiler = ("gcc -std=gnu17 -g1 -O0 -fno-omit-frame-pointer -fsanitize=address,undefined "
                 "-fno-sanitize-recover=all -w -Werror=incompatible-pointer-types -Werror=int-conversion "
                 "-fdiagnostics-plain-output -fmax-errors=5")
 
@@ -325,8 +324,7 @@ class C(Language):
         """Shapes, array -> length parameter pairs, and how each unpaired pointer is used."""
         shapes = [self._shape(p.type) for p in fn.params]
         names = [p.name for p in fn.params]
-        lengths = [i for i, s in enumerate(shapes)
-                   if s and s["kind"] in ("int", "uint") and not s["pointer"] and is_length(names[i])]
+        lengths = [i for i, s in enumerate(shapes) if s and s["kind"] in ("int", "uint") and is_length(names[i])]
         pairs = {}
         for i, s in enumerate(shapes):
             if not s or s["kind"] not in ("array", "strings", "string") or s.get("size"):
@@ -407,13 +405,13 @@ class C(Language):
             return made
         facts = [self._facts(a) for a in made.args]
         notes = []
-        for p, s, a, f in zip(fn.params, shapes, made.args, facts):
+        for i, (p, s, a, f) in enumerate(zip(fn.params, shapes, made.args, facts)):
             if s["pointer"] and not f["array"]:
                 if a not in self.null_words:
                     notes.append(f"{p.name} may be {self.null}")  # 0, {} and friends are null pointers too
-            elif s["kind"] == "string" and fn.params.index(p) not in pairs and not f["terminated"]:
+            elif s["kind"] == "string" and i not in pairs and not f["terminated"]:
                 notes.append(f"{p.name} may not be NUL-terminated")
-            elif s["kind"] == "array" and uses.get(fn.params.index(p)) == "array":
+            elif s["kind"] == "array" and uses.get(i) == "array":
                 notes.append(f"{p.name} may be shorter than the function expects")
             elif s["size"] and f["array"] and (f["size"] or 0) < s["size"]:
                 notes.append(f"{p.name} may have fewer than {s['size']} elements")
@@ -674,6 +672,7 @@ CASES
     runtime = r"""#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sanitizer/asan_interface.h>
 static int phantom_reported;
 static void phantom_json(const char *text, size_t n) {
     putchar('"');
@@ -687,7 +686,7 @@ static void phantom_json(const char *text, size_t n) {
 }
 void phantom_result(const char *text, size_t n) {
     phantom_reported = 1;
-    printf("\n@@PHANTOM {\"ok\": true, \"result\": ");
+    printf("\nRESULT_MARK{\"ok\": true, \"result\": ");
     phantom_json(text, n > 300 ? 300 : n);
     printf("}\n");
     fflush(stdout);
@@ -699,9 +698,15 @@ int phantom_begin(int argc, char **argv) {
     atexit(phantom_at_exit);
     return argc > 1 ? atoi(argv[1]) : -1;
 }
-void *phantom_alloc(size_t size) { return malloc(size); }
+void *phantom_alloc(size_t size) {
+    /* exactly the array's size, so one element too far is a heap-buffer-overflow; malloc(0) leaves
+       one byte readable, so an empty array's byte is poisoned (reported as heap-buffer-overflow) */
+    void *block = malloc(size ? size : 1);
+    if (!size) ASAN_POISON_MEMORY_REGION(block, 1);
+    return block;
+}
 void *phantom_copy(const void *data, size_t size) {
-    void *copy = malloc(size);  /* exactly the array's size: one element too far is a heap-buffer-overflow */
+    void *copy = phantom_alloc(size);
     if (size) memcpy(copy, data, size);
     return copy;
 }
@@ -738,7 +743,7 @@ void phantom_string(const char *s) {
 }
 void phantom_pointer(const void *p) { if (p) phantom_result("(pointer)", 9); else phantom_result("NULL", 4); }
 void phantom_value(const void *p) { (void)p; phantom_result("(value)", 7); }
-"""
+""".replace("RESULT_MARK", RESULT_MARK)
 
     # ---------- crashes ----------
 
@@ -773,211 +778,17 @@ void phantom_value(const void *p) { (void)p; phantom_result("(value)", 7); }
             message = f"{detail}; {access}" if access else detail
             if kind == "SEGV" and ("zero page" in err or re.search(r"unknown address 0x0{1,12}\b", err)):
                 return "null pointer dereference", message[:300]
+            if kind == "use-after-poison":  # only the harness poisons: the byte of an empty array
+                return "heap-buffer-overflow", message.replace("use-after-poison", "empty-array access")[:300]
             return {"ABRT": "abort", "FPE": "arithmetic exception", "BUS": "bus error"}.get(kind, kind), message[:300]
         return super().crash_error(code, err)
 
-
-class Cpp(C):
-    name = "cpp"
-    title = "C++"
-    vscode_ids = ("cpp",)
-    extensions = (".cpp", ".cc", ".cxx", ".hpp", ".hh")
-    grammar = "cpp"
-    local_tool = "g++"
-    ext = "cpp"
-    cpp = True
-    null_words = ("nullptr", "NULL")
-    null = "nullptr"
-    literal_hint = ("numbers (also -1, 1.5, 0x1F), 'c' chars, \"strings\", true/false, nullptr, limit macros "
-                    "such as INT_MAX, std::string(\"abc\"), std::vector<int>{1, 2, 3}, braced lists {1, 2, 3}, "
-                    "and C arrays as (int[]){1, 2, 3}")
-    compiler = ("g++ -std=gnu++20 -g -O0 -fno-omit-frame-pointer -fsanitize=address,undefined "
-                "-fno-sanitize-recover=all -D_GLIBCXX_ASSERTIONS -w -fdiagnostics-plain-output -fmax-errors=5")
-
-    def _callee(self, fn):
-        return f"::{fn.name}"  # qualified: no argument-dependent lookup of std::size, std::count...
-
-    def _bind(self, k, param, shape, arg):
-        plain = re.sub(r"\s*&+$", "", param.type)  # T & / const T & / T &&: a local the call can bind to
-        expr = self._cpp_array(arg) if shape["pointer"] else arg
-        return [f"{declare(plain, f'phantom_a{k}')} = {expr};"]
-
-    def _cpp_array(self, expr):
-        """C array literals for pointer parameters become exact-size heap copies: phantom_arr<T>({...})."""
-        _, node = self.expression_tree(expr)
-        return self._rewrite(node) if node is not None else expr
-
-    def _rewrite(self, node):
-        if node.type in ("string_literal", "concatenated_string"):
-            return f"phantom_arr(0, {self.text(node)})"
-        if node.type == "compound_literal_expression" and node.child_by_field_name("type").type == "type_descriptor":
-            type_text = self.text(node.child_by_field_name("type"))
-            items = node.child_by_field_name("value").named_children
-            declared = re.search(r"\[(\d*)\]", type_text)
-            if declared is None:
-                return self.text(node)
-            n = declared.group(1) or "0"
-            if len(items) == 1 and items[0].type in ("string_literal", "concatenated_string") and "*" not in type_text:
-                return f"phantom_arr({n}, {self.text(items[0])})"
-            element = re.sub(r"\[\d*\]", "", type_text).strip()
-            return f"phantom_arr<{element}>({n}, {{{', '.join(self._rewrite(c) for c in items)}}})"
-        return self.text(node)
-
-    def _show(self, fn, call):
-        return [f"if constexpr (std::is_void_v<decltype({call})>) {{ {call}; phantom_void(); }}",
-                f"else {{ const auto &phantom_r = {call}; std::string phantom_s = phantom_repr(phantom_r); "
-                "phantom_result(phantom_s.data(), phantom_s.size()); }"]
-
-    harness_head = r"""#include <climits>
-#include <cfloat>
-#include <cstddef>
-#include <cstdint>
-#include <string>
-#include <string_view>
-#include <vector>
-#include <type_traits>
-#include <typeinfo>
-#include <exception>
-#include <utility>
-#include <initializer_list>
-#include <new>
-#ifndef INFINITY
-#define INFINITY (__builtin_inff())
-#endif
-#ifndef NAN
-#define NAN (__builtin_nanf(""))
-#endif
-void *phantom_copy(const void *data, std::size_t size);
-void *phantom_alloc(std::size_t size);
-int phantom_begin(int argc, char **argv);
-void phantom_void(void);
-void phantom_result(const char *text, std::size_t n);
-std::string phantom_float_text(long double value);
-void phantom_exception(const char *type, const char *what);
-void phantom_unknown_exception(void);
-template <class T> static T *phantom_arr(std::size_t n, std::initializer_list<T> items) {
-    n = n > items.size() ? n : items.size();  /* (int[4]){1}: 4 elements, the rest zero */
-    T *copy = static_cast<T *>(phantom_alloc(sizeof(T) * n));
-    std::size_t k = 0;
-    for (const T &item : items) new (copy + k++) T(item);
-    for (; k < n; k++) new (copy + k) T();
-    return copy;
-}
-template <class T, std::size_t N> static std::remove_const_t<T> *phantom_arr(std::size_t n, const T (&items)[N]) {
-    using U = std::remove_const_t<T>;
-    U *copy = static_cast<U *>(phantom_alloc(sizeof(U) * (n > N ? n : N)));
-    for (std::size_t k = 0; k < (n > N ? n : N); k++) copy[k] = k < N ? items[k] : U();
-    return copy;
-}
-static std::string phantom_quote(const char *s, std::size_t n, char q) {
-    static const char hex[] = "0123456789abcdef";
-    std::string out(1, q);
-    for (std::size_t i = 0; i < n && i < 300; i++) {
-        unsigned char c = static_cast<unsigned char>(s[i]);
-        if (c == static_cast<unsigned char>(q) || c == '\\') { out += '\\'; out += static_cast<char>(c); }
-        else if (c == '\n') out += "\\n";
-        else if (c < 0x20 || c >= 0x7f) { out += "\\x"; out += hex[c >> 4]; out += hex[c & 15]; }
-        else out += static_cast<char>(c);
-    }
-    if (n > 300) out += "...";
-    return out + q;
-}
-template <class T> static std::string phantom_repr(const T &v) {
-    using U = std::remove_cv_t<T>;
-    if constexpr (std::is_same_v<U, bool>) return v ? "true" : "false";
-    else if constexpr (std::is_same_v<U, char>) return phantom_quote(&v, 1, '\'');
-    else if constexpr (std::is_enum_v<U>) return std::to_string(static_cast<long long>(v));
-    else if constexpr (std::is_integral_v<U>) return std::to_string(v);
-    else if constexpr (std::is_floating_point_v<U>) return phantom_float_text(v);
-    else if constexpr (std::is_same_v<U, char *> || std::is_same_v<U, const char *>) {
-        if (!v) return "nullptr";
-        std::size_t n = 0;
-        while (n < 301 && v[n]) n++;
-        return phantom_quote(v, n, '"');
-    }
-    else if constexpr (std::is_pointer_v<U> || std::is_null_pointer_v<U>) return v ? "(pointer)" : "nullptr";
-    else if constexpr (std::is_convertible_v<const U &, std::string_view>) {
-        std::string_view s = v;
-        return phantom_quote(s.data(), s.size(), '"');
-    }
-    else if constexpr (requires { v.first; v.second; }) return "(" + phantom_repr(v.first) + ", " + phantom_repr(v.second) + ")";
-    else if constexpr (requires { v.begin(); v.end(); }) {
-        std::string out = "[";
-        for (const auto &item : v) {
-            if (out.size() > 1) out += ", ";
-            if (out.size() > 300) { out += "..."; break; }
-            out += phantom_repr(item);
-        }
-        return out + "]";
-    }
-    else return "(value)";
-}
-"""
-    harness_main = """int main(int argc, char **argv) {
-    try {
-        switch (phantom_begin(argc, argv)) {
-CASES
-        }
-    } catch (const std::exception &e) {
-        phantom_exception(typeid(e).name(), e.what());
-    } catch (const char *text) {
-        phantom_exception(typeid(const char *).name(), text ? text : "");
-    } catch (const std::string &text) {
-        phantom_exception(typeid(std::string).name(), text.c_str());
-    } catch (...) {
-        phantom_unknown_exception();
-    }
-    return 0;
-}
-"""
-    runtime = C.runtime + r"""
-#include <string>
-#include <typeinfo>
-#include <execinfo.h>
-#include <dlfcn.h>
-#include <sanitizer/common_interface_defs.h>
-extern "C" char *__cxa_demangle(const char *, char *, size_t *, int *);
-extern "C" std::type_info *__cxa_current_exception_type();
-static void *phantom_frames[64];
-static int phantom_depth;
-extern "C" void __cxa_throw(void *object, void *type, void (*destroy)(void *)) {
-    /* remember where the exception was thrown; the harness reports it if nobody catches it */
-    phantom_depth = backtrace(phantom_frames, 64);
-    typedef void (*throw_fn)(void *, void *, void (*)(void *));
-    static throw_fn real = (throw_fn)dlsym(RTLD_NEXT, "__cxa_throw");
-    real(object, type, destroy);
-    __builtin_unreachable();
-}
-std::string phantom_float_text(long double v) {
-    char b[64];
-    snprintf(b, sizeof b, "%.15Lg", v);
-    return b;
-}
-void phantom_exception(const char *type, const char *what) {
-    int status = 0;
-    char *name = __cxa_demangle(type, 0, 0, &status);
-    std::string trace;
-    for (int k = 1; k < phantom_depth; k++) {
-        char frame[1024];
-        __sanitizer_symbolize_pc((char *)phantom_frames[k] - 1, "%f (%s:%l)", frame, sizeof frame);
-        trace += std::string("    at ") + frame + "\n";
-    }
-    phantom_reported = 1;
-    printf("\n@@PHANTOM {\"ok\": false, \"kind\": \"exception\", \"error\": ");
-    const char *shown = status == 0 && name ? name : type;
-    phantom_json(shown, strlen(shown));
-    printf(", \"message\": ");
-    phantom_json(what, strnlen(what, 1000));
-    printf(", \"trace\": ");
-    phantom_json(trace.data(), trace.size() > 4000 ? 4000 : trace.size());
-    printf("}\n");
-    fflush(stdout);
-}
-void phantom_unknown_exception(void) {
-    std::type_info *type = __cxa_current_exception_type();
-    phantom_exception(type ? type->name() : "unknown", "");
-}
-"""
+    def trace_line(self, text):
+        hits = re.findall(rf"{self.user_file}\.[A-Za-z]+:(\d+)", text or "")
+        frames = re.findall(rf"#\d+ .*{self.user_file}\.[A-Za-z]+:(\d+)", text or "")
+        if frames and "stack-overflow" in text:  # the recursive call, not wherever the stack happened to run out
+            return int(max(frames, key=frames.count))
+        return int(hits[0]) if hits else None
 
 
 class Value(tuple):

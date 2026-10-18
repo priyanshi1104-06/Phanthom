@@ -157,7 +157,7 @@ class Go(Language):
     tmpfs = "256m"
     env = {"CGO_ENABLED": "0", "GOFLAGS": "-buildvcs=false"}
     build_timeout = 40.0
-    call_timeout = 2
+    call_timeout = 1.5
     user_file = "main"
     null_words = ("nil",)
     literal_hint = ('Go literals: numbers (a leading minus is fine), strings ("..." or `...`), runes (\'a\'), '
@@ -188,7 +188,8 @@ class Go(Language):
 
     def _function(self, node, types):
         name, skip, params = self.text(node.child_by_field_name("name")), None, []
-        for decl in node.child_by_field_name("parameters").named_children:
+        holder = node.child_by_field_name("parameters")
+        for decl in holder.named_children if holder is not None else []:
             kind = self.text(decl.child_by_field_name("type"))
             if decl.type == "variadic_parameter_declaration":
                 skip = skip or "variadic parameters are not supported yet"
@@ -198,7 +199,7 @@ class Go(Language):
             for n in decl.children_by_field_name("name") or [None]:
                 params.append(Param(self.text(n) if n else f"arg{len(params) + 1}", kind))
         if node.type == "method_declaration":
-            receiver = node.child_by_field_name("receiver").named_children
+            receiver = [n for n in node.child_by_field_name("receiver").named_children if n.type != "comment"]
             kind = receiver[0].child_by_field_name("type") if receiver else None
             while kind is not None and kind.type in ("pointer_type", "generic_type", "parenthesized_type"):
                 kind = kind.child_by_field_name("type") if kind.type == "generic_type" else kind.named_children[-1]
@@ -220,7 +221,7 @@ class Go(Language):
     # ---------- types ----------
 
     def _type_node(self, type_text):
-        if not type_text or "\n" in type_text:
+        if not type_text:
             return None
         tree = self.parse(f"package p\nvar _ {type_text}\n")
         decl = tree.root_node.named_children[-1] if not tree.root_node.has_error else None
@@ -523,12 +524,34 @@ class Go(Language):
         calls = []
         for item in inputs:
             call = f"{fn.name}({', '.join(self._go_expr(a) for a in item.args)})"
-            calls.append(f"func() string {{ return phantomShow({call}) }}," if fn.returns
+            calls.append(f"func() string {{ return phantomShow({call}) }}," if (fn.returns or "()") != "()"
                          else f'func() string {{ {call}; return "" }},')
         harness = HARNESS.replace("@CALLS@", "\n\t".join(calls)).replace("@MARK@", RESULT_MARK)
         return {"files": {"main.go": self._user_file(source), "phantom_harness.go": harness}, "build": BUILD,
                 # SIGQUIT before the hard timeout: Go then prints where every goroutine is (the looping line)
                 "run": f"timeout -s QUIT {self.call_timeout - 0.5:g} ./prog {{i}}"}
+
+    def run_inputs(self, source, fn, inputs, sandbox):
+        """A hang is reported at the header of the innermost loop around the line SIGQUIT caught (where in
+        the loop body the process happened to be is chance). Now and then Go can't show the looping
+        goroutine's stack ("running on other thread"): such a hang gets the batch's usual line, or the
+        function's first loop."""
+        results = super().run_inputs(source, fn, inputs, sandbox)
+        hangs = [r for r in results if r.get("kind") == "timeout"]
+        if hangs:
+            loops, stack = [], [self.parse(source).root_node]
+            while stack:
+                node = stack.pop()
+                if node.type == "for_statement":
+                    loops.append((node.start_point[0] + 1, node.end_point[0] + 1))
+                stack.extend(node.named_children)
+            for r in hangs:
+                r["line"] = max((s for s, e in loops if s <= (r.get("line") or 0) <= e), default=r.get("line"))
+            usual = Counter(r["line"] for r in hangs if r.get("line")).most_common(1)
+            fallback = usual[0][0] if usual else min((s for s, _ in loops if fn.line <= s <= fn.end_line), default=None)
+            for r in hangs:
+                r["line"] = r.get("line") or fallback
+        return results
 
     def classify(self, code, out, err):
         result = super().classify(code, out, err)

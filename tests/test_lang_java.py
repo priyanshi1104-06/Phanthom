@@ -92,8 +92,9 @@ class LiteralTest(unittest.TestCase):
     def test_anything_that_runs_code_is_rejected(self):
         for expr in ("x", "f()", "1 + 1", '"a" + "b"', "System.exit(1)", "Runtime.getRuntime()",
                      'new java.io.File("x")', 'new ProcessBuilder("id")', "(int) 1", "x -> x", "String::valueOf",
-                     '"\\u0022 + System.exit(1) + \\u0022"', "'\\u0027'",  # javac decodes \u escapes before strings
-                     "1); System.exit(1); (1", "1; } } class X { static { System.exit(1); } } class Y { void m() { __x = 1",
+                     '"\\u0022 + System.exit(1) + \\u0022"', "'\\u0027'",  # javac decodes these first
+                     "1); System.exit(1); (1",
+                     "1; } } class X { static { System.exit(1); } } class Y { void m() { __x = 1",
                      "new int[1000000000]", "new ArrayList<>(1000000000)",  # sizes: memory, not literals
                      "new ArrayList<>() {{ System.exit(1); }}", "new HashMap<>(Map.of()) {}", "List.of(1).getClass()",
                      '"\\{x}"', "!true", "~1", "--1", "1 // c", "/* c */ 1", "new int[]{1, /* c */ 2}",

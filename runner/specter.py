@@ -213,7 +213,7 @@ def severity(lang, assumptions):
     values (untyped code, extreme numbers). info: only fails when handed null/None/nil."""
     if not assumptions:
         return "error"
-    nulls = tuple(f" may be {word}" for word in lang.null_words)
+    nulls = tuple(f" may {verb} {word}" for word in lang.null_words for verb in ("be", "contain"))
     return "info" if nulls and all(a.endswith(nulls) for a in assumptions) else "warning"
 
 
@@ -319,6 +319,8 @@ def replay(source, language, function, given, path=None):
     if given.get("exprs") is not None:
         if len(given["exprs"]) != len(fn.params):
             return {"ok": None, "message": f"{function} now takes {len(fn.params)} arguments"}
+        if not all(isinstance(e, str) and lang.literal_ok(e) for e in given["exprs"]):
+            return {"ok": None, "message": "only plain literals can be replayed"}
         return lang.run_inputs(source, fn, [Input(list(given["exprs"]))], sandbox)[0]
     from runner.analyzer import replay_input  # a Python fuzz finding: tagged JSON arguments
     from runner.context import function_context

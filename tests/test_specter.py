@@ -84,6 +84,12 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(specter.severity(js, []), "error")
         self.assertEqual(specter.severity(js, ["x may be null", "y may be undefined"]), "info")
         self.assertEqual(specter.severity(js, ["x may be null", "y may be {}"]), "warning")
+        self.assertEqual(specter.severity(js, ["items may contain null"]), "info")
+
+    def test_replay_runs_only_plain_literals(self):
+        source = "function f(x) {\n  return x;\n}\n"
+        answer = specter.replay(source, "javascript", "f", {"exprs": ['require("fs")']})
+        self.assertEqual(answer["ok"], None)
 
 
 class RunTest(unittest.TestCase):
