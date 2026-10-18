@@ -1,119 +1,145 @@
 # Phantom
 
-Phantom finds bugs in Python functions and backs every report with evidence: a concrete input that
-makes the function fail, replayed in a fresh sandboxed process to prove it reproduces.
-**Repro or it didn't happen.** It does not claim code is bug-free: "no failing input found" means only
-that none of the generated inputs failed.
+Phantom finds bugs while you write code, before you run it, and backs every report with evidence: a
+concrete input that makes the function fail, replayed in a fresh sandbox to prove it reproduces.
+**Repro or it didn't happen.** It never claims code is bug-free: "no failing input found" means only that
+none of the inputs it tried failed.
 
-- **Phase 1, the shadow runner:** point it at a file, and for every function it generates inputs from the
-  type hints (Hypothesis), runs them in an isolated worker (Docker), and reports the smallest failing input.
-- **Phase 2, in the editor:** a VS Code extension and a local backend. Pause typing and you get static
-  hints within milliseconds, then red squiggles for confirmed bugs, with a one-click **Replay** of the failing input.
+Phantom has three AI layers of increasing depth:
+
+| Layer | Speed | What it does | State |
+|---|---|---|---|
+| **Specter** | always on, ~1 s | boundary inputs from the types + a fast model's suggestions, run in a sandbox; risk triage of every edit | **built, 10 languages** |
+| **Analyst** | seconds | a large model + a code graph: callers broken by an edit, intent bugs (wrong answers) | next |
+| **Oracle** | tens of seconds | a frontier agent in the sandbox: writes tests, fuzzes, proves fixes | after Analyst |
+
+Specter escalates on its own: an edit touching databases, memory handling, dangerous calls or deletion asks
+for the Analyst; concurrency, auth, payments or schema migrations ask for the Oracle.
+
+## Languages
+
+Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby, PHP. Each runs in its own Docker image:
+
+```bash
+python phantom.py languages     # what is supported and ready
+python phantom.py setup         # pull/build every language's sandbox image (or: setup go rust ...)
+```
 
 ## Setup (once)
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-docker build -f sandbox/Dockerfile -t phantom-sandbox .   # the sandbox; again after changing sandbox/requirements.txt
-cd extension && npm install && cd ..                        # the VS Code extension (needs Node.js)
+python phantom.py setup                   # Docker images (Python's is built from sandbox/Dockerfile)
+cd extension && npm install && cd ..      # the VS Code extension (needs Node.js)
+cp .env.example .env                      # optional: put ANTHROPIC_API_KEY in .env for Specter's model
 ```
+
+Without an API key Specter still works: it uses boundary inputs only, and the status bar says so.
 
 ## In VS Code
 
 Open this folder in VS Code, pick **Run and Debug > "Phantom: backend + extension"** and press **F5**.
 That starts the backend and opens a second VS Code window with the extension loaded and `samples/` open.
-Open `buggy.py` there:
+Open any file in `samples/` there:
 
-- **red squiggle** = confirmed bug: the message names the failing input, e.g.
-  `average([]) raises ZeroDivisionError: division by zero`; it's on the line that failed;
-- **"▶ Replay average([])"** above the function = run that input again in a fresh sandbox against the code
-  as it is now. After fixing the bug, it tells you the bug no longer reproduces;
-- **yellow squiggle** = static hint (undefined name, mutable default argument, ...): not run, not confirmed;
-- **status bar** = number of confirmed bugs in the file, and whether code runs sandboxed. Click it for the log.
+- **red squiggle** = fails on an input its types allow, e.g. `average([]) raises ZeroDivisionError`;
+  it's on the line that failed;
+- **yellow squiggle** = fails only under a named assumption (untyped code: "values may be {}", or extreme
+  numbers: "n may be as large as INT_MAX"); also static hints for Python (undefined names, ...);
+- **faint dots** = fails only when handed null/None/nil ("text may be null"): hover to see it;
+- **"▶ Replay average([])"** above the function = run that input again in a fresh sandbox against the
+  code as it is now; after a fix it tells you the bug no longer reproduces;
+- **status bar** = confirmed/assumed counts, the edit's risk and which layer should look
+  (`risk high → Oracle`), and a warning if code isn't sandboxed. Click it for the log.
 
-Fix a bug and its red squiggle goes away a moment after you stop typing. Settings: `phantom.enabled`,
-`phantom.backendUrl`, `phantom.debounceMs` (700), `phantom.shadowRun`.
+Settings: `phantom.enabled`, `phantom.backendUrl`, `phantom.debounceMs` (700), `phantom.shadowRun`,
+`phantom.useModel`.
 
 ## From the command line
 
 ```bash
-python phantom.py samples/buggy.py
+python phantom.py samples/buggy.py               # any supported file; the extension picks the language
+python phantom.py samples/go/buggy.go -f Average # one function
+python phantom.py samples/javascript/buggy.js --json --no-model
 ```
 
 ```
-  BUG  average         line 10: ZeroDivisionError: division by zero
-                       repro: average([])   (reproduced in a fresh worker)
-  BUG  find_index      line 23: ReturnTypeError: returned None (NoneType), but the annotation says -> int
-                       repro: find_index([], 0)   (reproduced in a fresh worker)
-  BUG  collatz_steps   line 50: Timeout: no result after 1 s (possible infinite loop)
-                       repro: collatz_steps(0)   (reproduced in a fresh worker)
+samples/javascript/buggy.js  (javascript, runs in: Docker sandbox, risk: low)
+
+  BUG  average       line 5: TypeError: Reduce of empty array with no initial value
+                     repro: average([])   (reproduced in a fresh sandbox; boundary input)
+  null firstWord     line 10: TypeError: Cannot read properties of null (reading 'trim')
+                     repro: firstWord(null)   (reproduced in a fresh sandbox; boundary input)
+                     assumes: text may be null
+  BUG  collatzSteps  line 28: Timeout: no result after 2 s (possible infinite loop)
+                     repro: collatzSteps(0)   (reproduced in a fresh sandbox; boundary input)
   ...
-  ok   is_leap_year    no failing input in 200 generated inputs
-
-  9 of 10 functions have a confirmed failing input.
+  ok   isLeapYear    no failing input in 6 inputs
 ```
 
-Options: `-f NAME` (one function, repeatable), `--json` (findings in the repro format),
-`--examples N` (inputs per function, default 200), `--sandbox auto|docker|local`.
+Exit code 1 when a function fails on an input its types allow.
 
 ## The sandbox
 
-With Docker, each run gets a throwaway container: **no network, 256 MB memory, read-only filesystem,
-no privileges, user `nobody`**. `auto` (the default) uses Docker as soon as the `phantom-sandbox` image
-exists. Without it, code runs in a separate local process that caps its own memory (1 GB) and CPU time,
-and the status bar says "not sandboxed".
+Every run gets a throwaway container: **no network, a memory cap, read-only filesystem with a small
+scratch `/tmp`, all capabilities dropped, no new privileges, user `nobody`**. The code is built once and
+each input runs in a fresh process with a time limit; each failure is then replayed alone in a brand-new
+container before it is reported. Without Docker, a language falls back to a local process if its
+toolchain is installed (the status bar says "not sandboxed"); `PHANTOM_SANDBOX=docker` forbids that.
+
+The model's inputs are untrusted: each must parse as a plain literal of the language (no calls,
+variables, arithmetic or string interpolation) before it is compiled into the test harness, and it only
+counts if it reproduces in the sandbox.
 
 ## How it works
 
 ```
-VS Code extension ──HTTP──> backend/app.py ──> runner/static.py      (pyflakes: hints, milliseconds)
- (extension/src)    localhost               └─> runner/analyzer.py  (per function, cached by hash)
-                                                 ├─ runner/context.py   cut out the function + what it needs
-                                                 └─ runner/executor.py  start a worker in Docker
-                                                      └─ worker.py      Hypothesis inputs until one fails,
-phantom.py (CLI) ─────────────────────────────────> analyzer           shrink it; then replay it fresh
+VS Code extension ──HTTP──> backend/app.py ──> runner/specter.py        per function, cached by hash
+ (extension/src)    localhost  /triage            ├─ runner/triage.py     risk from the words in the code
+                               /specter           ├─ runner/llm.py        the model's hypotheses (optional)
+phantom.py (CLI) ────────────> /replay            ├─ runner/languages/    one plugin per language:
+                                                  │    functions, literal check, boundary inputs, harness
+                                                  └─ runner/executor.py   the Docker sandbox
 ```
 
-- **worker.py** - the only place analysed code runs. Two jobs: `fuzz` (search for a failing input) and
-  `call` (run one input: the replay). Detects exceptions, infinite loops (per-call time limit) and return
-  values that contradict the annotation (e.g. `None` from `-> int`).
-- **runner/executor.py** - starts the worker (Docker or local), passes the job on stdin, kills it on timeout.
-- **runner/analyzer.py** - fuzzes a function, replays the failing input; only a failure that replays the
-  same way is a `bug`.
-- **runner/context.py** - what goes into the sandbox: the function, the imports, and the top-level functions,
-  classes and constants it uses. Other lines are blanked, so line numbers stay those of your file.
-- **runner/static.py** - pyflakes, minus style-only messages, plus a mutable-default-argument check.
-- **backend/app.py** - FastAPI: `/static`, `/shadow`, `/replay`, `/health`. Caches each function's result
-  by a hash of its code and context, so typing in one function only re-runs that function (and its callers).
-- **extension/** - debounces typing (700 ms), shows diagnostics, Replay links and the status bar.
-- **samples/buggy.py** - 10 deliberately buggy functions; **samples/correct.py** - false-positive check.
+- **runner/specter.py** - for each function: boundary inputs + model inputs, all run in one sandbox,
+  failures grouped and replayed in a fresh one; Python functions are also fuzzed with Hypothesis.
+- **runner/languages/base.py** - the plugin contract; one file per language next to it.
+- **runner/triage.py** - low / medium / high / critical per function and per edit, and who to escalate to.
+- **runner/llm.py** - Claude API access per layer (Specter: Haiku; Analyst: Sonnet; Oracle: Fable);
+  settings in `.env`.
+- **worker.py**, **runner/analyzer.py**, **runner/context.py** - the Python engine from Phase 1.
+- **backend/app.py** - FastAPI on 127.0.0.1:8765; refuses browser requests.
+- **extension/** - debounces typing, shows diagnostics, Replay links and the status bar.
+- **samples/** - deliberately buggy and correct code for every language.
 
-The repro format (`--json`, and what `/shadow` returns), which later layers build on:
+A finding (`--json`, and what `/specter` returns):
 
 ```json
-{"function": "average", "def_line": 8, "status": "bug", "examples": 5,
- "input": {"args": [[]], "call": "average([])"},
- "failure": {"kind": "exception", "error": "ZeroDivisionError", "message": "division by zero",
-             "line": 10, "traceback": "..."}}
+{"function": "average", "def_line": 4, "language": "javascript", "status": "bug",
+ "severity": "error", "origin": "edge", "assumptions": [],
+ "input": {"call": "average([])", "exprs": ["[]"]},
+ "failure": {"kind": "exception", "error": "TypeError",
+             "message": "Reduce of empty array with no initial value", "line": 5, "traceback": "..."}}
 ```
 
 ## Limits (so far)
 
-- Finds crashes, timeouts and return-type violations. A function that returns a wrong answer without
-  crashing (`is_leap_year` in the samples) needs an intent check: the Analyst layer.
-- Specter, Analyst and Oracle (the three AI layers) are being built; today the editor shows static checks and the shadow run.
-- Only top-level functions whose parameters have type hints (or defaults) are run; others are `skipped`.
+- Finds crashes, hangs, sanitizer errors and return-type violations. A wrong answer without a crash
+  (`is_leap_year` in the samples) needs an intent check: the Analyst layer.
+- Top-level functions with parameters Phantom can build values for; methods, generics, struct/class
+  parameters are listed as `skipped`.
 - Pure functions only: no I/O, network or databases (the sandbox blocks them anyway).
-- The extension sends the whole file to the backend, which runs on the same machine; only each function and
-  its context goes into the sandbox. Before the backend moves to a server, the extension must send only that.
+- The extension sends the whole file to the backend, which runs on the same machine. Before the backend
+  moves to a server, the extension must send only what each function needs.
 
 ## Tests
 
 ```bash
-python -m unittest -v                              # Python: worker, sandbox, samples, backend
+python -m unittest -v                              # Python side: plugins, Specter, sandbox, backend
 cd extension && npm test                           # extension wording (Node)
 cd extension && npm run test:integration           # end to end in a real VS Code (downloads one, starts the backend)
 ```
 
-The sandbox tests (hostile code against network, filesystem, memory) run when the Docker image is built.
+The sandbox tests run for each language whose Docker image is present.

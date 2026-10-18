@@ -1,41 +1,32 @@
 """Phantom analysis backend: the VS Code extension sends the file it's editing, this answers.
 
-    uvicorn backend.app:app --port 8765
+    python -m backend        (uvicorn on 127.0.0.1:8765)
 
-POST /static  {"source"}                       -> Specter's static checks (milliseconds)
-POST /shadow  {"source"}                       -> shadow run of every public function (seconds)
-POST /replay  {"source", "function", "args"}   -> run one failing input again, in a fresh sandbox
-GET  /health                                   -> {"ok": true, "sandbox": "docker" | "local"}
+GET  /health                                         -> sandbox per language, model status
+POST /static  {"source", "language"?}                -> Python static checks (milliseconds; other languages: [])
+POST /triage  {"source", "language"?, "path"?}       -> Specter's risk rating of the file and the edit (milliseconds)
+POST /specter {"source", "language"?, "path"?, "model"?} -> Specter: reproduced failing inputs per function (seconds)
+POST /replay  {"source", "language"?, "path"?, "function", "input"} -> run one finding's input again, fresh sandbox
 
-Shadow results are cached by a hash of what each function needs to run (its code plus its
-context), so an unchanged function is never analysed twice: typing in one function only re-runs
-that function and the functions that use it.
+`language` is a VS Code languageId or a Phantom language name; without it the file extension of
+`path` decides, and without both it is Python (what the Phase 2 extension sent).
 
+Specter caches each function's result by a hash of the code it needs, so typing in one function
+re-runs only that function. The backend remembers each file's function texts from the last
+/specter call, so triage can tell which functions the edit changed.
 The extension sends the whole file because this backend runs on the same machine (localhost).
-Only each function and its context goes into the sandbox.
 """
-import ast
-import hashlib
-import os
 import threading
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from runner.analyzer import analyze_function, analyze_in_file, replay_input
-from runner.context import function_context, public_functions
-from runner.executor import choose_sandbox
+from runner import languages, llm, specter
 from runner.static import static_findings
 
-SANDBOX = choose_sandbox(os.environ.get("PHANTOM_SANDBOX", "auto"))
-MAX_EXAMPLES = int(os.environ.get("PHANTOM_EXAMPLES", "200"))
-CACHE_SIZE = 2000
-
 app = FastAPI(title="Phantom")
-pool = ThreadPoolExecutor(max_workers=int(os.environ.get("PHANTOM_JOBS", "4")))
 
 
 @app.middleware("http")
@@ -49,85 +40,93 @@ async def no_browsers(request, call_next):
 
 class Source(BaseModel):
     source: str
+    language: str | None = None
+    path: str | None = None
+    model: bool = True
 
 
 class Replay(BaseModel):
     source: str
     function: str
-    args: list
+    language: str | None = None
+    path: str | None = None
+    input: dict | None = None  # a finding's "input": {"exprs": [...]} or {"args": [...]}
+    args: list | None = None  # Phase 2 extension: Python arguments as tagged JSON
 
 
-class ShadowCache:
-    """Finished and in-progress analyses by key. Two requests for the same function share one run."""
+class LastLook:
+    """Each file's function texts from the last Specter run (the 500 most recent files)."""
 
-    def __init__(self, size):
-        self.size = size
-        self.futures = OrderedDict()
-        self.lock = threading.Lock()
+    def __init__(self, size=500):
+        self.size, self.texts, self.lock = size, OrderedDict(), threading.Lock()
 
-    def get(self, key, compute):
+    def get(self, key):
         with self.lock:
-            future = self.futures.get(key)
-            if future is None:
-                future = self.futures[key] = pool.submit(compute)
-                while len(self.futures) > self.size:
-                    self.futures.popitem(last=False)
-            self.futures.move_to_end(key)
-        try:
-            return future.result()
-        except Exception:
-            with self.lock:  # don't cache a failure of Phantom itself
-                if self.futures.get(key) is future:
-                    del self.futures[key]
-            raise
+            return self.texts.get(key)
+
+    def put(self, key, texts):
+        if texts is None:
+            return
+        with self.lock:
+            self.texts[key] = texts
+            self.texts.move_to_end(key)
+            while len(self.texts) > self.size:
+                self.texts.popitem(last=False)
 
 
-cache = ShadowCache(CACHE_SIZE)
+last_look = LastLook()
 
 
-def cached_analyze(source, func_name, **options):
-    key = hashlib.sha256(f"{SANDBOX}\0{MAX_EXAMPLES}\0{func_name}\0{source}".encode()).hexdigest()
-    return cache.get(key, lambda: analyze_function(source, func_name, **options))
+def language_of(request):
+    if request.language or request.path:
+        return request.language, request.path
+    return "python", None
 
 
-def parse(source):
-    try:
-        return ast.parse(source)
-    except SyntaxError:
-        return None  # mid-typing: the extension keeps showing the last results
+def file_key(request):
+    language, path = language_of(request)
+    return f"{language}\0{path or ''}"
 
 
 @app.get("/health")
 def health():
-    return {"ok": True, "sandbox": SANDBOX}
+    ready = {}
+    for lang in languages.LANGUAGES.values():
+        ready[lang.name] = {"title": lang.title, "vscode_ids": list(lang.vscode_ids), "sandbox": lang.sandbox()}
+    python = ready.get("python", {}).get("sandbox")
+    return {"ok": True, "sandbox": python, "languages": ready, "model": llm.status()}
 
 
 @app.post("/static")
 def static(request: Source):
-    tree = parse(request.source)
-    if tree is None:
-        return {"parsed": False, "findings": []}
-    return {"parsed": True, "findings": static_findings(request.source, tree)}
+    language, path = language_of(request)
+    lang = languages.resolve(language, path)
+    if lang is None:
+        return {"parsed": False, "supported": False, "findings": []}
+    if lang.has_errors(request.source):
+        return {"parsed": False, "findings": []}  # mid-typing: the extension keeps the last results
+    findings = static_findings(request.source) if lang.name == "python" else []
+    return {"parsed": True, "findings": findings}
 
 
-@app.post("/shadow")
-def shadow(request: Source):
-    tree = parse(request.source)
-    if tree is None:
-        return {"parsed": False, "findings": []}
-    # One thread per function; each waits on its (cached or new) sandbox run in the shared pool.
-    with ThreadPoolExecutor(max_workers=8) as waiters:
-        findings = list(waiters.map(
-            lambda name: analyze_in_file(request.source, tree, name, cached_analyze,
-                                         sandbox=SANDBOX, max_examples=MAX_EXAMPLES),
-            public_functions(tree)))
-    return {"parsed": True, "sandbox": SANDBOX, "findings": findings}
+@app.post("/triage")
+def triage(request: Source):
+    language, path = language_of(request)
+    return specter.assess(request.source, language, path, previous=last_look.get(file_key(request)))
+
+
+@app.post("/specter")
+def run_specter(request: Source):
+    language, path = language_of(request)
+    key = file_key(request)
+    answer = specter.run(request.source, language, path, use_model=request.model, previous=last_look.get(key))
+    if answer.get("parsed"):
+        last_look.put(key, specter.function_texts(request.source, language, path))
+    return answer
 
 
 @app.post("/replay")
 def replay(request: Replay):
-    tree = parse(request.source)
-    if tree is None:
-        return {"ok": None, "message": "the file doesn't parse right now"}
-    snippet = function_context(request.source, request.function, tree)
-    return replay_input(snippet, request.function, request.args, SANDBOX)
+    language, path = language_of(request)
+    given = request.input or {"args": request.args}
+    return specter.replay(request.source, language, request.function, given, path)

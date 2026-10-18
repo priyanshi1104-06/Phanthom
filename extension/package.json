@@ -1,7 +1,7 @@
 {
   "name": "phantom",
   "displayName": "Phantom",
-  "description": "Finds bugs in Python while you type, and backs each one with a failing input.",
+  "description": "Finds bugs while you type, in Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby and PHP, and backs each one with a failing input reproduced in a sandbox.",
   "version": "0.1.0",
   "publisher": "phantom",
   "license": "UNLICENSED",
@@ -13,7 +13,16 @@
     "Linters"
   ],
   "activationEvents": [
-    "onLanguage:python"
+    "onLanguage:python",
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:go",
+    "onLanguage:java",
+    "onLanguage:c",
+    "onLanguage:cpp",
+    "onLanguage:rust",
+    "onLanguage:ruby",
+    "onLanguage:php"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -37,7 +46,7 @@
         "phantom.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Analyse Python files while you type."
+          "description": "Analyse supported files while you type."
         },
         "phantom.backendUrl": {
           "type": "string",
@@ -53,7 +62,12 @@
         "phantom.shadowRun": {
           "type": "boolean",
           "default": true,
-          "description": "Run each function on generated inputs in the sandbox to find confirmed, reproducible bugs."
+          "description": "Run each function on boundary inputs (and the model's suggestions) in the sandbox to find reproducible bugs."
+        },
+        "phantom.useModel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let Specter's model suggest inputs and rate risk (needs ANTHROPIC_API_KEY in the backend's .env). Its inputs only count if they reproduce in the sandbox."
         }
       }
     }

@@ -70,41 +70,74 @@ class StaticTest(unittest.TestCase):
 class BackendTest(unittest.TestCase):
     client = TestClient(app)
 
-    def test_health(self):
-        self.assertTrue(self.client.get("/health").json()["ok"])
+    def test_health_lists_every_language(self):
+        health = self.client.get("/health").json()
+        self.assertTrue(health["ok"])
+        self.assertIn("python", health["languages"])
+        self.assertIn("typescript", health["languages"]["typescript"]["vscode_ids"])
+        self.assertIn("available", health["model"])
 
     def test_static(self):
         response = self.client.post("/static", json={"source": "def f():\n    return nope\n"}).json()
         self.assertEqual(response["findings"][0]["rule"], "UndefinedName")
+        js = self.client.post("/static", json={"source": "let x = 1;", "language": "javascript"}).json()
+        self.assertEqual(js, {"parsed": True, "findings": []})
 
     def test_unparsable_source_is_not_an_error(self):
-        for path in ("/static", "/shadow"):
-            self.assertEqual(self.client.post(path, json={"source": "def f(:\n"}).json(),
-                             {"parsed": False, "findings": []})
+        for path in ("/static", "/specter"):
+            response = self.client.post(path, json={"source": "def f(:\n"}).json()
+            self.assertEqual((response["parsed"], response["findings"]), (False, []))
+        self.assertFalse(self.client.post("/triage", json={"source": "function f( {", "language": "javascript"})
+                         .json()["parsed"])
 
-    def test_shadow_finds_and_caches(self):
+    def test_unknown_languages_are_not_supported(self):
+        response = self.client.post("/specter", json={"source": "x", "language": "cobol"}).json()
+        self.assertEqual(response["supported"], False)
+
+    def test_specter_finds_and_caches(self):
         start = time.monotonic()
-        first = self.client.post("/shadow", json={"source": BUGGY}).json()
+        first = self.client.post("/specter", json={"source": BUGGY, "path": "/w/buggy.py", "model": False}).json()
         cold = time.monotonic() - start
         findings = {f["function"]: f for f in first["findings"]}
         self.assertEqual(findings["average"]["status"], "bug")
         self.assertEqual(findings["average"]["def_line"], 8)
         self.assertEqual(findings["average"]["input"]["call"], "average([])")
+        self.assertEqual(findings["average"]["severity"], "error")
 
-        # Edit one function: only that one is analysed again.
+        # Edit one function: only that one runs again, and triage sees which function changed.
         edited = BUGGY.replace("return sum(values) / len(values)",
                                "return sum(values) / len(values) if values else 0.0")
+        triage = self.client.post("/triage", json={"source": edited, "path": "/w/buggy.py"}).json()
+        self.assertEqual(triage["risk"]["changed"], ["average"])
         start = time.monotonic()
-        second = {f["function"]: f for f in self.client.post("/shadow", json={"source": edited}).json()["findings"]}
+        second = self.client.post("/specter", json={"source": edited, "path": "/w/buggy.py", "model": False}).json()
+        second = {f["function"]: f for f in second["findings"]}
         self.assertEqual(second["average"]["status"], "no_bug_found")
         self.assertEqual(second["factorial"], findings["factorial"])
         self.assertLess(time.monotonic() - start, cold)
 
+    def test_other_languages_by_language_id_or_path(self):
+        source = "function average(values) {\n  return values.reduce((a, b) => a + b) / values.length;\n}\n"
+        for request in ({"language": "javascript"}, {"path": "/w/stats.js"}):
+            answer = self.client.post("/specter", json={"source": source, "model": False, **request}).json()
+            if answer.get("setup"):
+                self.skipTest("no JavaScript sandbox")
+            bug = next(f for f in answer["findings"] if f["status"] == "bug" and f["severity"] == "error")
+            self.assertEqual((bug["input"]["exprs"], bug["failure"]["error"], bug["failure"]["line"]),
+                             (["[]"], "TypeError", 2))
+        replayed = self.client.post("/replay", json={"source": source, "language": "javascript",
+                                                     "function": "average", "input": {"exprs": ["[]"]}}).json()
+        self.assertEqual((replayed["ok"], replayed["error"]), (False, "TypeError"))
+
     def test_replay(self):
-        result = self.client.post("/replay", json={"source": BUGGY, "function": "average", "args": [[]]}).json()
+        result = self.client.post("/replay", json={"source": BUGGY, "function": "average",
+                                                   "input": {"exprs": ["[]"]}}).json()
         self.assertEqual((result["ok"], result["error"], result["line"]), (False, "ZeroDivisionError", 10))
+        # the Phase 2 extension's format: tagged JSON arguments
         fixed = self.client.post("/replay", json={"source": BUGGY, "function": "average", "args": [[2, 4]]}).json()
         self.assertEqual(fixed, {"ok": True, "result": 3.0})
+        gone = self.client.post("/replay", json={"source": BUGGY, "function": "nope", "args": []}).json()
+        self.assertIsNone(gone["ok"])
 
     def test_browser_requests_are_refused(self):
         response = self.client.post("/static", json={"source": "x = 1"}, headers={"Origin": "https://evil.example"})

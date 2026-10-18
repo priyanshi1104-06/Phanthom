@@ -1,32 +1,59 @@
-// Unit tests for the editor wording: node --test out/test/
+// Unit tests for the editor wording: npm test
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { bugLine, bugMessage, confirmedBugs, describeReplay, ShadowFinding, toZeroBased } from '../findings';
+import {
+  bugLine, bugMessage, confirmedBugs, describeReplay, diagnosticLevel, Finding, lensTitle, Risk, riskText,
+  statusText, toZeroBased,
+} from '../findings';
 
-const findings: ShadowFinding[] = [
+const findings: Finding[] = [
   {
-    function: 'average', def_line: 8, status: 'bug', examples: 5,
-    input: { args: [[]], call: 'average([])' },
+    function: 'average', def_line: 8, status: 'bug', severity: 'error', origin: 'edge', assumptions: [],
+    input: { call: 'average([])', exprs: ['[]'] },
     failure: { kind: 'exception', error: 'ZeroDivisionError', message: 'division by zero', line: 10 },
   },
   {
-    function: 'collatz_steps', def_line: 45, status: 'bug',
-    input: { args: [0], call: 'collatz_steps(0)' },
+    function: 'collatz_steps', def_line: 45, status: 'bug', severity: 'error', assumptions: [],
+    input: { call: 'collatz_steps(0)', exprs: ['0'] },
     failure: { kind: 'timeout', error: 'Timeout', message: 'no result after 1 s', line: 48 },
   },
-  { function: 'flaky', def_line: 50, status: 'unconfirmed', input: { args: [1], call: 'flaky(1)' },
-    failure: { kind: 'exception', error: 'ValueError', message: 'x', line: 51 } },
+  {
+    function: 'firstWord', def_line: 9, status: 'bug', severity: 'info', assumptions: ['text may be null'],
+    input: { call: 'firstWord(null)', exprs: ['null'] },
+    failure: { kind: 'exception', error: 'TypeError', message: "Cannot read properties of null (reading 'trim')", line: 10 },
+  },
+  {
+    function: 'scale', def_line: 3, status: 'bug', severity: 'warning', assumptions: ['n may be as large as INT_MAX'],
+    input: { call: 'scale(INT_MAX)', exprs: ['INT_MAX'] },
+    failure: { kind: 'crash', error: 'signed integer overflow', message: '2147483647 * 2 cannot be represented', line: 4 },
+  },
+  { // Phase 2 format: tagged JSON arguments, no severity
+    function: 'factorial', def_line: 55, status: 'bug', input: { call: 'factorial(-1)', args: [-1] },
+    failure: { kind: 'exception', error: 'RecursionError', message: 'maximum recursion depth exceeded', line: 58 },
+  },
   { function: 'is_leap_year', def_line: 61, status: 'no_bug_found', examples: 200 },
+  { function: 'gen', def_line: 70, status: 'skipped', reason: 'generator functions are not run yet' },
 ];
 
 test('only reproduced failures become bugs', () => {
-  assert.deepEqual(confirmedBugs(findings).map((b) => b.function), ['average', 'collatz_steps']);
+  assert.deepEqual(confirmedBugs(findings).map((b) => b.function),
+    ['average', 'collatz_steps', 'firstWord', 'scale', 'factorial']);
+  assert.equal(confirmedBugs(findings)[4].severity, 'error'); // old findings count as confirmed
 });
 
-test('messages name the failing input', () => {
-  const [average, collatz] = confirmedBugs(findings);
+test('severity decides how loud the squiggle is', () => {
+  assert.deepEqual(confirmedBugs(findings).map(diagnosticLevel), ['error', 'error', 'hint', 'warning', 'error']);
+});
+
+test('messages name the failing input and the assumption', () => {
+  const [average, collatz, firstWord, scale] = confirmedBugs(findings);
   assert.equal(bugMessage(average), 'Confirmed bug (reproduced): average([]) raises ZeroDivisionError: division by zero');
-  assert.match(bugMessage(collatz), /^Possible infinite loop \(reproduced\): collatz_steps\(0\)/);
+  assert.match(bugMessage(collatz), /^Possible infinite loop: collatz_steps\(0\)/);
+  assert.equal(bugMessage(firstWord),
+    "Fails if text may be null (reproduced): firstWord(null) raises TypeError: Cannot read properties of null (reading 'trim')");
+  assert.match(bugMessage(scale), /scale\(INT_MAX\) crashes with signed integer overflow/);
+  assert.match(lensTitle(average), /confirmed ZeroDivisionError {2}▶ Replay average\(\[\]\)/);
+  assert.match(lensTitle(scale), /^\$\(warning\) Phantom: assumed/);
 });
 
 test('squiggle goes on the failing line, clamped to the document', () => {
@@ -37,9 +64,22 @@ test('squiggle goes on the failing line, clamped to the document', () => {
 });
 
 test('replay verdicts', () => {
-  assert.match(describeReplay('average([])', { ok: true, result: 3 }).summary, /no longer reproduces/);
+  assert.match(describeReplay('average([])', { ok: true, result: 3 }).summary, /returned 3: the bug no longer reproduces/);
+  assert.match(describeReplay('average([2])', { ok: true, result: '2' }).summary, /returned 2:/); // other languages: text
   const still = describeReplay('average([])', { ok: false, kind: 'exception', error: 'ZeroDivisionError',
     message: 'division by zero', line: 10, traceback: 'Traceback...' });
   assert.equal(still.summary, 'average([]) still fails: ZeroDivisionError: division by zero (line 10)');
   assert.match(describeReplay('f()', { ok: false, kind: 'error', message: 'SyntaxError' }).summary, /^Couldn't replay/);
+  assert.match(describeReplay('f()', { ok: false, kind: 'build_error', error: 'BuildError', message: 'x' }).summary,
+    /^Couldn't replay/);
+});
+
+test('status bar: counts, risk and escalation', () => {
+  const bugs = confirmedBugs(findings);
+  const risk: Risk = { level: 'high', edit_level: 'high', changed: ['pay'], escalate: 'oracle',
+    reasons: [{ function: 'pay', category: 'payments', evidence: ['amount', 'balance'] }] };
+  assert.equal(statusText(bugs, 'docker', risk), '$(bug) Phantom: 3 confirmed · 1 assumed · risk high → Oracle');
+  assert.equal(statusText([], 'local'), '$(check) Phantom: not sandboxed');
+  assert.equal(statusText([], 'docker', { ...risk, level: 'low', escalate: null }), '$(check) Phantom');
+  assert.equal(riskText({ ...risk, escalate: null, level: 'medium' }), 'risk medium');
 });

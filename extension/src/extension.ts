@@ -1,22 +1,42 @@
-// Phantom for VS Code: when you pause typing in a Python file, ask the backend for
-//   1. static checks (milliseconds)  -> yellow squiggles, hints only
-//   2. a shadow run (seconds)        -> red squiggles, only for failures reproduced in the sandbox
-// and show a "Replay" link above each function with a confirmed bug.
+// Phantom for VS Code: when you pause typing in a supported file, ask the backend for
+//   1. static checks (Python only, milliseconds)     -> yellow squiggles, hints only
+//   2. Specter's triage (milliseconds)               -> risk of the edit in the status bar
+//   3. Specter's run (seconds)                       -> squiggles only for failures reproduced in the sandbox:
+//        red = fails on an input its types allow, yellow = needs an assumption, faint dots = only on null
+// and show a "Replay" link above each function with a confirmed or assumed bug.
 import * as vscode from 'vscode';
 import {
-  bugLine, bugMessage, ConfirmedBug, confirmedBugs, describeReplay, lensTitle, ReplayResult,
-  ShadowFinding, StaticFinding, statusText, toZeroBased,
+  bugLine, bugMessage, ConfirmedBug, confirmedBugs, describeReplay, diagnosticLevel, escalationReason, Finding,
+  lensTitle, ReplayResult, Risk, StaticFinding, statusText, SUPPORTED_LANGUAGES, toZeroBased,
 } from './findings';
 
 interface FileState {
   timer?: NodeJS.Timeout;
   controller?: AbortController;
   staticDiagnostics: vscode.Diagnostic[];
-  shadowDiagnostics: vscode.Diagnostic[];
+  bugDiagnostics: vscode.Diagnostic[];
   bugs: ConfirmedBug[];
+  risk?: Risk;
+  sandbox?: string;
+  setup?: string;
+  escalated?: string;
+}
+
+interface SpecterAnswer {
+  parsed: boolean;
+  supported?: boolean;
+  sandbox?: string;
+  setup?: string;
+  risk?: Risk;
+  findings: Finding[];
 }
 
 const RETRY_MS = 5000;
+const SEVERITY = {
+  error: vscode.DiagnosticSeverity.Error,
+  warning: vscode.DiagnosticSeverity.Warning,
+  hint: vscode.DiagnosticSeverity.Hint,
+};
 
 export function activate(context: vscode.ExtensionContext): void {
   const phantom = new Phantom();
@@ -34,7 +54,6 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private running = 0;
   private offline = false;
-  private sandbox: string | undefined;
 
   readonly onDidChangeCodeLenses = this.lensesChanged.event;
 
@@ -42,7 +61,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     this.status.command = 'phantom.showOutput';
     this.disposables.push(
       this.diagnostics, this.output, this.status, this.lensesChanged,
-      vscode.languages.registerCodeLensProvider({ language: 'python' }, this),
+      vscode.languages.registerCodeLensProvider(SUPPORTED_LANGUAGES.map((language) => ({ language })), this),
       vscode.workspace.onDidChangeTextDocument((e) => this.schedule(e.document)),
       vscode.workspace.onDidOpenTextDocument((doc) => this.schedule(doc, 0)),
       vscode.workspace.onDidCloseTextDocument((doc) => this.forget(doc)),
@@ -81,7 +100,12 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
       backendUrl: c.get<string>('backendUrl', 'http://127.0.0.1:8765').replace(/\/+$/, ''),
       debounceMs: c.get<number>('debounceMs', 700),
       shadowRun: c.get<boolean>('shadowRun', true),
+      useModel: c.get<boolean>('useModel', true),
     };
+  }
+
+  private supported(doc: vscode.TextDocument): boolean {
+    return SUPPORTED_LANGUAGES.includes(doc.languageId) && ['file', 'untitled'].includes(doc.uri.scheme);
   }
 
   private restart(): void {
@@ -93,7 +117,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
   }
 
   private schedule(doc: vscode.TextDocument, delay = this.config().debounceMs): void {
-    if (doc.languageId !== 'python' || !['file', 'untitled'].includes(doc.uri.scheme) || !this.config().enabled) {
+    if (!this.supported(doc) || !this.config().enabled) {
       return;
     }
     const state = this.state(doc);
@@ -105,7 +129,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     const key = doc.uri.toString();
     let state = this.files.get(key);
     if (!state) {
-      state = { staticDiagnostics: [], shadowDiagnostics: [], bugs: [] };
+      state = { staticDiagnostics: [], bugDiagnostics: [], bugs: [] };
       this.files.set(key, state);
     }
     return state;
@@ -124,6 +148,14 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
 
   // ---------- talking to the backend ----------
 
+  private request(doc: vscode.TextDocument) {
+    return {
+      source: doc.getText(),
+      language: doc.languageId,
+      path: doc.uri.scheme === 'file' ? doc.uri.fsPath : undefined,
+    };
+  }
+
   private async analyze(doc: vscode.TextDocument): Promise<void> {
     if (doc.isClosed) {
       return;
@@ -133,38 +165,53 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     const controller = new AbortController();
     state.controller = controller;
     const version = doc.version;
-    const source = doc.getText();
+    const body = this.request(doc);
     const stale = () => controller.signal.aborted || doc.isClosed || doc.version !== version;
 
     this.running++;
     this.updateStatus();
     try {
-      const fast = await this.post<{ parsed: boolean; findings: StaticFinding[] }>(
-        '/static', { source }, controller.signal);
+      if (doc.languageId === 'python') {
+        const fast = await this.post<{ parsed: boolean; findings: StaticFinding[] }>('/static', body, controller.signal);
+        if (stale()) {
+          return;
+        }
+        if (fast.parsed) { // unparsable = mid-typing: keep the previous squiggles
+          state.staticDiagnostics = fast.findings.map((f) => this.staticDiagnostic(doc, f));
+          this.publish(doc);
+        }
+      }
+      const triage = await this.post<{ parsed: boolean; risk?: Risk }>('/triage', body, controller.signal);
       if (stale()) {
         return;
       }
       this.offline = false;
-      if (fast.parsed) { // unparsable = mid-typing: keep the previous squiggles
-        state.staticDiagnostics = fast.findings.map((f) => this.staticDiagnostic(doc, f));
-        this.publish(doc);
+      if (triage.parsed && triage.risk) {
+        state.risk = triage.risk;
+        this.noteEscalation(doc, state);
+        this.updateStatus();
       }
       if (!this.config().shadowRun) {
-        state.shadowDiagnostics = [];
+        state.bugDiagnostics = [];
         state.bugs = [];
         this.publish(doc);
         return;
       }
-      const shadow = await this.post<{ parsed: boolean; sandbox?: string; findings: ShadowFinding[] }>(
-        '/shadow', { source }, controller.signal);
-      if (stale() || !shadow.parsed) {
+      const answer = await this.post<SpecterAnswer>(
+        '/specter', { ...body, model: this.config().useModel }, controller.signal);
+      if (stale() || !answer.parsed) {
         return;
       }
-      this.sandbox = shadow.sandbox;
-      state.bugs = confirmedBugs(shadow.findings);
-      state.shadowDiagnostics = state.bugs.map((bug) => this.bugDiagnostic(doc, bug));
+      state.sandbox = answer.sandbox;
+      state.setup = answer.setup;
+      state.risk = answer.risk ?? state.risk;
+      state.bugs = confirmedBugs(answer.findings);
+      state.bugDiagnostics = state.bugs.map((bug) => this.bugDiagnostic(doc, bug));
       this.publish(doc);
-      this.log(`${vscode.workspace.asRelativePath(doc.uri)}: ${state.bugs.length} confirmed bug(s)`);
+      const errors = state.bugs.filter((b) => b.severity === 'error').length;
+      this.log(`${vscode.workspace.asRelativePath(doc.uri)}: ${errors} confirmed, ` +
+        `${state.bugs.length - errors} under an assumption` +
+        (answer.setup ? ` (no ${doc.languageId} sandbox yet: run  ${answer.setup})` : ''));
     } catch (error) {
       if (controller.signal.aborted) {
         return;
@@ -179,6 +226,17 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
       this.running--;
       this.updateStatus();
     }
+  }
+
+  /** Log once per edit that needs a deeper layer (Analyst and Oracle are the next layers to build). */
+  private noteEscalation(doc: vscode.TextDocument, state: FileState): void {
+    const risk = state.risk;
+    const key = risk?.escalate ? `${risk.escalate}:${risk.changed.join(',')}` : undefined;
+    if (risk?.escalate && key !== state.escalated) {
+      this.log(`${vscode.workspace.asRelativePath(doc.uri)}: this edit is ${risk.edit_level} risk ` +
+        `(${escalationReason(risk)}) → ${risk.escalate === 'oracle' ? 'Oracle' : 'Analyst'} should look`);
+    }
+    state.escalated = key;
   }
 
   private async post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
@@ -209,21 +267,22 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
   private bugDiagnostic(doc: vscode.TextDocument, bug: ConfirmedBug): vscode.Diagnostic {
     const line = doc.lineAt(bugLine(bug, doc.lineCount));
     const range = new vscode.Range(line.lineNumber, line.firstNonWhitespaceCharacterIndex, line.lineNumber, line.text.length);
-    const diagnostic = new vscode.Diagnostic(range, bugMessage(bug), vscode.DiagnosticSeverity.Error);
+    const level = diagnosticLevel(bug);
+    const diagnostic = new vscode.Diagnostic(range, bugMessage(bug), SEVERITY[level]);
     diagnostic.source = 'Phantom';
-    diagnostic.code = 'confirmed';
+    diagnostic.code = level === 'error' ? 'confirmed' : 'assumed';
     return diagnostic;
   }
 
   private publish(doc: vscode.TextDocument): void {
     const state = this.state(doc);
-    this.diagnostics.set(doc.uri, [...state.staticDiagnostics, ...state.shadowDiagnostics]);
+    this.diagnostics.set(doc.uri, [...state.staticDiagnostics, ...state.bugDiagnostics]);
     this.lensesChanged.fire();
     this.updateStatus();
   }
 
   provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
-    const bugs = this.files.get(doc.uri.toString())?.bugs ?? [];
+    const bugs = (this.files.get(doc.uri.toString())?.bugs ?? []).filter((bug) => bug.severity !== 'info');
     return bugs.map((bug) => {
       const line = toZeroBased(bug.def_line ?? bug.failure.line ?? 1, doc.lineCount);
       return new vscode.CodeLens(doc.lineAt(line).range, {
@@ -237,21 +296,27 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
 
   private updateStatus(): void {
     const doc = vscode.window.activeTextEditor?.document;
-    if (!this.config().enabled || doc?.languageId !== 'python') {
+    if (!this.config().enabled || !doc || !this.supported(doc)) {
       this.status.hide();
       return;
     }
+    const state = this.files.get(doc.uri.toString());
     if (this.offline) {
       this.status.text = '$(debug-disconnect) Phantom: backend offline';
       this.status.tooltip = 'Start the backend in a terminal: python -m backend';
+    } else if (state?.setup) {
+      this.status.text = `$(tools) Phantom: ${doc.languageId} not set up`;
+      this.status.tooltip = `No sandbox for this language yet. In a terminal: ${state.setup}`;
     } else if (this.running > 0) {
       this.status.text = '$(sync~spin) Phantom';
       this.status.tooltip = 'Analysing...';
     } else {
-      this.status.text = statusText(this.files.get(doc.uri.toString())?.bugs.length ?? 0, this.sandbox);
-      this.status.tooltip = this.sandbox === 'docker'
-        ? 'Code runs in the Docker sandbox. Click for the log.'
-        : 'Code runs in a local process, NOT the Docker sandbox. Click for the log.';
+      this.status.text = statusText(state?.bugs ?? [], state?.sandbox, state?.risk);
+      const where = !state?.sandbox || state.sandbox === 'docker'
+        ? 'Code runs in the Docker sandbox.'
+        : 'Code runs in a local process, NOT the Docker sandbox.';
+      const risk = state?.risk?.reasons.length ? `\nRisk: ${escalationReason(state.risk)}` : '';
+      this.status.tooltip = `${where}${risk}\nClick for the log.`;
     }
     this.status.show();
   }
@@ -267,7 +332,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
       const bugs = this.files.get(doc.uri.toString())?.bugs ?? [];
       const picked = await vscode.window.showQuickPick(
         bugs.map((b) => ({ label: b.input.call, description: `${b.failure.error}: ${b.failure.message}`, bug: b })),
-        { placeHolder: bugs.length ? 'Failing input to replay' : 'No confirmed bugs in this file' });
+        { placeHolder: bugs.length ? 'Failing input to replay' : 'No reproduced bugs in this file' });
       bug = picked?.bug;
       if (!bug) {
         return;
@@ -277,7 +342,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     try {
       const result = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Phantom: replaying ${call} in a fresh sandbox...` },
-        () => this.post<ReplayResult>('/replay', { source: doc.getText(), function: bug.function, args: bug.input.args }));
+        () => this.post<ReplayResult>('/replay', { ...this.request(doc), function: bug.function, input: bug.input }));
       const { summary, details } = describeReplay(call, result);
       this.log(`Replay: ${summary}${details ? '\n' + details : ''}`);
       if (result.ok === true) {

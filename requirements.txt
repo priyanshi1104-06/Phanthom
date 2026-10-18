@@ -3,4 +3,7 @@
 fastapi==0.143.2
 uvicorn==0.54.0
 pyflakes==4.0.3
+anthropic==1.15.0  # Specter's model (optional: without ANTHROPIC_API_KEY Specter uses boundary inputs only)
+tree-sitter==0.26.0  # parsing every language except Python
+tree-sitter-language-pack==1.22.1
 httpx2==2.13.1  # tests (FastAPI TestClient)

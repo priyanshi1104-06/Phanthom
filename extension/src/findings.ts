@@ -1,23 +1,35 @@
 // What the backend returns, and how it is worded in the editor. No `vscode` import here,
 // so this file can be tested with plain Node.
 
+/** VS Code languageIds Specter handles (the backend's /health lists the same). */
+export const SUPPORTED_LANGUAGES = [
+  'python', 'javascript', 'typescript', 'go', 'java', 'c', 'cpp', 'rust', 'ruby', 'php',
+];
+
 export interface Failure {
-  kind: 'exception' | 'timeout' | 'return_type' | string;
+  kind: 'exception' | 'timeout' | 'crash' | 'return_type' | string;
   error: string;
   message: string;
   line: number | null;
   traceback?: string;
 }
 
-export interface ShadowFinding {
+export interface Finding {
   function: string;
   def_line: number | null;
-  status: 'bug' | 'unconfirmed' | 'no_bug_found' | 'skipped' | 'error' | string;
+  language?: string;
+  status: 'bug' | 'no_bug_found' | 'skipped' | 'error' | string;
+  severity?: 'error' | 'warning' | 'info';
+  origin?: 'edge' | 'model' | 'fuzz' | string;
+  assumptions?: string[];
   examples?: number;
-  input?: { args: unknown[] | null; call: string };
+  input?: { call: string; exprs?: string[]; args?: unknown[] | null };
   failure?: Failure;
   reason?: string;
 }
+
+/** Phase 2 name, kept for older code. */
+export type ShadowFinding = Finding;
 
 export interface StaticFinding {
   line: number;
@@ -26,32 +38,53 @@ export interface StaticFinding {
   message: string;
 }
 
-export interface ConfirmedBug extends ShadowFinding {
+export interface ConfirmedBug extends Finding {
   status: 'bug';
-  input: { args: unknown[]; call: string };
+  severity: 'error' | 'warning' | 'info';
+  assumptions: string[];
+  input: { call: string; exprs?: string[]; args?: unknown[] };
   failure: Failure;
 }
 
+export interface Risk {
+  level: 'low' | 'medium' | 'high' | 'critical';
+  edit_level: 'low' | 'medium' | 'high' | 'critical';
+  changed: string[];
+  escalate: 'analyst' | 'oracle' | null;
+  reasons: { function?: string; category: string; evidence: string[] }[];
+}
+
 /** Only reproduced failures are bugs. Everything else stays out of the editor. */
-export function confirmedBugs(findings: ShadowFinding[]): ConfirmedBug[] {
-  return findings.filter(
-    (f): f is ConfirmedBug => f.status === 'bug' && !!f.failure && !!f.input && Array.isArray(f.input.args),
-  );
+export function confirmedBugs(findings: Finding[]): ConfirmedBug[] {
+  return findings
+    .filter((f) => f.status === 'bug' && !!f.failure && !!f.input && typeof f.input.call === 'string')
+    .map((f) => ({ ...f, severity: f.severity ?? 'error', assumptions: f.assumptions ?? [] }) as ConfirmedBug);
+}
+
+/** error = fails on an input its types allow; warning = needs an assumption; info = only on null. */
+export function diagnosticLevel(bug: ConfirmedBug): 'error' | 'warning' | 'hint' {
+  return bug.severity === 'info' ? 'hint' : bug.severity;
 }
 
 export function bugMessage(bug: ConfirmedBug): string {
   const { failure, input } = bug;
+  const label = bug.severity === 'error'
+    ? 'Confirmed bug (reproduced)'
+    : `Fails if ${bug.assumptions.join(' and ')} (reproduced)`;
   if (failure.kind === 'timeout') {
-    return `Possible infinite loop (reproduced): ${input.call} gave no result within the time limit.`;
+    return `Possible infinite loop: ${input.call} gave no result within the time limit. ${label}.`;
   }
   if (failure.kind === 'return_type') {
-    return `Confirmed bug (reproduced): ${input.call} ${failure.message}.`;
+    return `${label}: ${input.call} ${failure.message}.`;
   }
-  return `Confirmed bug (reproduced): ${input.call} raises ${failure.error}: ${failure.message}`;
+  const verb = failure.kind === 'crash' ? 'crashes with' : 'raises';
+  return `${label}: ${input.call} ${verb} ${failure.error}: ${failure.message}`;
 }
 
 export function lensTitle(bug: ConfirmedBug): string {
-  return `$(bug) Phantom: confirmed ${bug.failure.error}  ▶ Replay ${bug.input.call}`;
+  const icon = bug.severity === 'error' ? '$(bug)' : '$(warning)';
+  const what = bug.severity === 'error' ? 'confirmed' : 'assumed';
+  return `${icon} Phantom: ${what} ${bug.failure.error}  ▶ Replay ${bug.input.call}`;
 }
 
 /** Where to put the squiggle: the failing line, else the def line; 0-based, inside the document. */
@@ -77,11 +110,12 @@ export interface ReplayResult {
 export function describeReplay(call: string, result: ReplayResult): { summary: string; details: string } {
   if (result.ok === true) {
     return {
-      summary: `${call} returned ${JSON.stringify(result.result)}: the bug no longer reproduces.`,
+      summary: `${call} returned ${typeof result.result === 'string' ? result.result : JSON.stringify(result.result)}: ` +
+        'the bug no longer reproduces.',
       details: '',
     };
   }
-  if (result.ok === false && result.kind !== 'error' && result.kind !== 'crash') {
+  if (result.ok === false && !['error', 'build_error'].includes(result.kind ?? '') && result.error !== 'SandboxError') {
     const where = result.line ? ` (line ${result.line})` : '';
     return {
       summary: `${call} still fails: ${result.error}: ${result.message}${where}`,
@@ -91,10 +125,40 @@ export function describeReplay(call: string, result: ReplayResult): { summary: s
   return { summary: `Couldn't replay ${call}: ${result.message ?? 'unknown error'}`, details: result.traceback ?? '' };
 }
 
-export function statusText(bugs: number, sandbox: string | undefined): string {
-  const where = sandbox === 'docker' ? 'sandboxed' : 'not sandboxed';
-  if (bugs === 0) {
-    return `$(check) Phantom (${where})`;
+const LAYER = { analyst: 'Analyst', oracle: 'Oracle' };
+
+/** "risk high → Oracle" for the status bar ("" when low and nothing to escalate). */
+export function riskText(risk: Risk | undefined): string {
+  if (!risk) {
+    return '';
   }
-  return `$(bug) Phantom: ${bugs} confirmed (${where})`;
+  const escalate = risk.escalate ? ` → ${LAYER[risk.escalate]}` : '';
+  return risk.level === 'low' && !escalate ? '' : `risk ${risk.level}${escalate}`;
+}
+
+/** Why the edit escalates, for the log: "pay: payments (amount, balance)". */
+export function escalationReason(risk: Risk): string {
+  return risk.reasons.map((r) => `${r.function ? r.function + ': ' : ''}${r.category} (${r.evidence.join(', ')})`)
+    .join('; ');
+}
+
+export function statusText(bugs: ConfirmedBug[], sandbox: string | undefined, risk?: Risk): string {
+  const errors = bugs.filter((b) => b.severity === 'error').length;
+  const warnings = bugs.filter((b) => b.severity === 'warning').length;
+  const parts: string[] = [];
+  if (errors) {
+    parts.push(`${errors} confirmed`);
+  }
+  if (warnings) {
+    parts.push(`${warnings} assumed`);
+  }
+  const riskPart = riskText(risk);
+  if (riskPart) {
+    parts.push(riskPart);
+  }
+  if (sandbox && sandbox !== 'docker') {
+    parts.push('not sandboxed');
+  }
+  const icon = errors ? '$(bug)' : warnings ? '$(warning)' : '$(check)';
+  return `${icon} Phantom${parts.length ? ': ' + parts.join(' · ') : ''}`;
 }

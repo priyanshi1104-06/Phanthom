@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -114,3 +115,56 @@ def last_json_line(stdout):
         if isinstance(data, dict):
             return data
     return None
+
+
+# ---------- other languages: a shell script run in that language's image ----------
+
+_ready_cache = {}  # language -> (checked at, answer)
+READY_TTL = 30  # seconds: an image pulled while the backend runs is noticed this quickly
+
+
+def language_sandbox(lang):
+    """"docker" when the language's image is present, "local" when only its toolchain is on PATH, else None.
+    PHANTOM_SANDBOX=docker or =local allows only that one."""
+    requested = os.environ.get("PHANTOM_SANDBOX", "auto")
+    checked, found = _ready_cache.get((lang.name, requested), (None, None))
+    if checked is not None and time.monotonic() - checked < READY_TTL:
+        return found
+    found = None
+    if requested in ("auto", "docker") and shutil.which("docker") and subprocess.run(
+            ["docker", "image", "inspect", lang.image], capture_output=True).returncode == 0:
+        found = "docker"
+    elif requested in ("auto", "local") and lang.local_tool and shutil.which(lang.local_tool):
+        found = "local"
+    _ready_cache[(lang.name, requested)] = (time.monotonic(), found)
+    return found
+
+
+def run_script(lang, script, count, sandbox):
+    """Run a plugin's script (build once, then `count` inputs) and return its stdout."""
+    timeout = lang.build_timeout + count * (lang.call_timeout + 1)
+    name = f"phantom-{uuid.uuid4().hex[:12]}" if sandbox == "docker" else None
+    if sandbox == "docker":
+        env_flags = [flag for key, value in lang.env.items() for flag in ("-e", f"{key}={value}")]
+        command = ["docker", "run", f"--name={name}", "--rm", "--interactive", "--network=none",
+                   f"--memory={lang.memory}", f"--memory-swap={lang.memory}", "--cpus=1", "--pids-limit=128",
+                   "--read-only", f"--tmpfs=/tmp:rw,exec,size={lang.tmpfs}", "--cap-drop=ALL",
+                   "--security-opt=no-new-privileges", "--user=65534:65534", "-e", "HOME=/tmp",
+                   *env_flags, lang.image, "sh", "-s"]
+        env, cwd = None, None
+    else:
+        cwd = tempfile.mkdtemp(prefix="phantom-run-")
+        command = ["sh", "-s"]
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": cwd, "LANG": "C.UTF-8",
+               "PHANTOM_WORK": cwd, **lang.env}
+    proc = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        stdout, _ = proc.communicate(script, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill(proc, name)
+        stdout, _ = proc.communicate()
+    finally:
+        if cwd:
+            shutil.rmtree(cwd, ignore_errors=True)
+    return stdout

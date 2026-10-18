@@ -10,6 +10,9 @@ Call job - run the function once with given arguments (used to replay a repro):
   | {"ok": false, "kind": "exception" | "timeout" | "return_type", "error": "ZeroDivisionError",
      "message": "division by zero", "line": 1, "traceback": "..."}
 
+Calls job - several inputs in one worker: {"mode": "calls", ..., "calls": [[1, 0], [[]]]}
+ -> {"results": [<a call result for each input>]}
+
 Fuzz job - generate inputs from the type hints with Hypothesis until one fails:
     {"mode": "fuzz", "source": "...", "func_name": "div", "max_examples": 200}
  -> {"status": "bug", "examples": 12, "input": {"args": [0, 0], "call": "div(0, 0)"}, "failure": {...}}
@@ -176,6 +179,22 @@ def run_call(job):
         return {"ok": True, "result": encode(value)}
     except TypeError:
         return {"ok": True, "result": short_repr(value)}
+
+
+def run_calls(job):
+    """Several inputs in one worker (each with its own time limit). State can leak between calls,
+    which is why every failure is replayed alone in a fresh worker before it counts."""
+    func = load_function(job["source"], job["func_name"])
+    timeout = job.get("call_timeout", 1.0)
+    results = []
+    for args in job["calls"]:
+        try:
+            value = call_once(func, decode(args), timeout)
+        except (Exception, Timeout, SystemExit) as exc:
+            results.append({"ok": False, **describe_failure(exc, func, timeout)})
+            continue
+        results.append({"ok": True, "result": short_repr(value, 300)})
+    return {"results": results}
 
 
 def run_fuzz(job):
@@ -351,6 +370,8 @@ def handle(job):
     try:
         if mode == "fuzz":
             return run_fuzz(job)
+        if mode == "calls":
+            return run_calls(job)
         return run_call(job)
     except Exception as exc:  # the source didn't load: syntax error, missing function, ...
         error = {"error": type(exc).__name__, "message": safe_str(exc)}
