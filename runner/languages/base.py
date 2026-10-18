@@ -235,12 +235,12 @@ class Language:
         lines.append("echo '@@BUILD 0'")
         run = prog["run"]
         for i in range(len(inputs)):
-            lines += [
-                f"timeout -k 1 {self.call_timeout} {run.format(i=i)} > .out 2> .err < /dev/null",
+            lines += [  # elapsed seconds tell a timeout's SIGKILL from the memory limit's; the verdict is printed last
+                f"s=$(date +%s); timeout -k 1 {self.call_timeout} {run.format(i=i)} > .out 2> .err < /dev/null",
                 "code=$?",
-                f"echo \"@@RUN {i} $code\"",
-                "head -c 65536 .out | base64 -w0; echo",
-                "head -c 65536 .err | base64 -w0; echo",
+                f"echo \"@@RUN {i} $code $(( $(date +%s) - s ))\"",
+                "tail -c 65536 .out | base64 -w0; echo",
+                "tail -c 65536 .err | base64 -w0; echo",
             ]
         return "\n".join(lines) + "\n"
 
@@ -255,10 +255,15 @@ class Language:
                 failure = {"ok": False, "kind": "build_error", "error": "BuildError", "message": detail[-2000:]}
                 return [failure] * count
             if line.startswith("@@RUN "):
-                _, i, code = line.split()
+                _, i, code, *elapsed = line.split()
                 out = _b64(lines[index + 1] if index + 1 < len(lines) else "")
                 err = _b64(lines[index + 2] if index + 2 < len(lines) else "")
-                results[int(i)] = self.classify(int(code), out, err)
+                result = self.classify(int(code), out, err)
+                if result.get("kind") == "timeout" and code == "137" and elapsed and int(elapsed[0]) < self.call_timeout:
+                    # SIGKILL before the time limit: the memory limit, not `timeout -k`
+                    result = {**result, "kind": "crash", "error": "OutOfMemory",
+                              "message": f"killed after {elapsed[0]} s: the memory limit ({self.memory}) was reached"}
+                results[int(i)] = result
                 index += 3
                 continue
             index += 1
@@ -286,6 +291,9 @@ class Language:
                 verdict["line"] = verdict.get("line") or self.trace_line(trace)
                 verdict["traceback"] = trace
             return verdict
+        if code == 0:  # ended normally without a verdict (e.g. the code called exit itself): not a failure
+            return {"ok": False, "kind": "no_verdict", "error": "NoVerdict",
+                    "message": "the program ended without reporting a result (did the code call exit?)"}
         error, message = self.crash_error(code, err)
         return {"ok": False, "kind": "crash", "error": error, "message": message,
                 "line": self.trace_line(err), "traceback": err[-4000:]}
