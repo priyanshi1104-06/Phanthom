@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from runner import languages, llm, specter
+from runner.languages.base import Input
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 C = languages.get("c")
@@ -113,6 +114,21 @@ class InputsTest(unittest.TestCase):
         self.assertIn(("std::vector<int>{}", None), CPP.edge_values("const std::vector<int> &", "v"))
         self.assertEqual(C.edge_values("struct point", "p"), [])
 
+    def test_every_edge_input_is_a_plain_literal(self):  # replay accepts only what literal_ok accepts
+        c_source = ("int f(const char *s, char *w, const char **names, size_t count, char c, _Bool b, double d,"
+                    " unsigned char u, long long q, ssize_t z) { return 0; }\n"
+                    "int g(char *buf, int x, const double *xs, unsigned long len, bool *flags, int grid[9],"
+                    " uint8_t *bytes, size_t nbytes, char **words, int n) { return 0; }\n")
+        cpp_source = ("int h(const std::string &s, std::string_view v, std::vector<std::string> names,"
+                      " const std::vector<long long> &q, std::vector<bool> &flags, std::vector<char> cs,"
+                      " std::vector<std::size_t> sizes, const char *p, char *w, int &r, unsigned x) { return 0; }\n")
+        for lang, source in ((C, c_source), (CPP, cpp_source)):
+            for fn in lang.functions(source):
+                self.assertIsNone(fn.skip, fn.name)
+                for inp in lang.edge_inputs(fn):
+                    for arg in inp.args:
+                        self.assertTrue(lang.literal_ok(arg), f"{fn.name}: {arg}")
+
     def test_a_pointer_and_its_length_change_together(self):
         fn = C.functions("int sum(const int *values, int count) { return 0; }")[0]
         inputs = {tuple(i.args): i.assumptions for i in C.edge_inputs(fn)}
@@ -175,8 +191,13 @@ class CrashReportTest(unittest.TestCase):
                 result = CPP.classify(1, "", err)
                 self.assertEqual((result["kind"], result["error"], result["line"]), ("crash", error, line))
 
-    def test_exit_is_a_result_and_timeouts_are_timeouts(self):
-        self.assertEqual(C.classify(1, '\n@@PHANTOM {"ok": true, "result": "exit() was called"}\n', "")["ok"], True)
+    def test_exit_is_never_a_finding_and_timeouts_are_timeouts(self):
+        source = "#include <stdlib.h>\nint check(int n) {\n    if (n < 0) exit(2);\n    return n;\n}\n"
+        fn = C.functions(source)[0]
+        harness = C.program(source, fn, [Input(["-1"])])["files"]["phantom_rt.c"]
+        self.assertIn("no_verdict", harness)  # an atexit handler reports exit(2) as a deliberate stop
+        self.assertNotIn(C.classify(2, '\n@@PHANTOM {"ok": false, "kind": "no_verdict"}\n', "")["kind"],
+                         specter.FAILURES)
         self.assertEqual(C.classify(124, "", "")["kind"], "timeout")
 
 

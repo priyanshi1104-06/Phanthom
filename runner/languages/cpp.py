@@ -21,8 +21,11 @@ class Cpp(C):
     extensions = (".cpp", ".cc", ".cxx", ".hpp", ".hh")
     grammar = "cpp"
     local_tool = "g++"
+    memory = "768m"  # cc1plus on <bits/stdc++.h> with sanitizers peaks around 330 MB
     ext = "cpp"
     cpp = True
+    literal_nodes = C.literal_nodes | {"initializer_list", "call_expression"}
+    literal_calls = frozenset({"std::string"})
     null_words = ("nullptr", "NULL")
     null = "nullptr"
     literal_hint = ("numbers (also -1, 1.5, 0x1F), 'c' chars, \"strings\", true/false, nullptr, limit macros "
@@ -61,9 +64,7 @@ class Cpp(C):
         return self.text(node)
 
     def _show(self, fn, call):
-        return [f"if constexpr (std::is_void_v<decltype({call})>) {{ {call}; phantom_void(); }}",
-                f"else {{ const auto &phantom_r = {call}; std::string phantom_s = phantom_repr(phantom_r); "
-                "phantom_result(phantom_s.data(), phantom_s.size()); }"]
+        return [f"phantom_call([&]() -> decltype(auto) {{ return {call}; }});"]
 
     harness_head = r"""#include <climits>
 #include <cfloat>
@@ -140,7 +141,8 @@ template <class T> static std::string phantom_repr(const T &v) {
         std::string_view s = v;
         return phantom_quote(s.data(), s.size(), '"');
     }
-    else if constexpr (requires { v.first; v.second; }) return "(" + phantom_repr(v.first) + ", " + phantom_repr(v.second) + ")";
+    else if constexpr (requires { v.first; v.second; })
+        return "(" + phantom_repr(v.first) + ", " + phantom_repr(v.second) + ")";
     else if constexpr (requires { v.begin(); v.end(); }) {
         std::string out = "[";
         for (const auto &item : v) {
@@ -151,6 +153,16 @@ template <class T> static std::string phantom_repr(const T &v) {
         return out + "]";
     }
     else return "(value)";
+}
+template <class F> static void phantom_call(F call) {
+    if constexpr (std::is_void_v<decltype(call())>) {
+        call();
+        phantom_void();
+    } else {
+        const auto &result = call();
+        std::string text = phantom_repr(result);
+        phantom_result(text.data(), text.size());
+    }
 }
 """
     harness_main = """int main(int argc, char **argv) {

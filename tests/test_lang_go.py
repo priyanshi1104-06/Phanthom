@@ -123,6 +123,8 @@ class InputsTest(unittest.TestCase):
         self.assertEqual(options[1][0], ("&Point{}", "q may be the zero value Point{}"))
         self.assertEqual(options[2][0], ("IDs{1, 2, 3}", None))
         self.assertEqual(options[3][0], ("1.5", None))
+        for values in options:  # a finding's input must pass the literal check again to be replayed
+            self.assertTrue(all(GO.literal_ok(value) for value, _ in values), values)
 
     def test_edge_inputs_vary_one_parameter_at_a_time(self):
         inputs = [tuple(i.args) for i in GO.edge_inputs(GO.functions("package p\nfunc f(a int, b string) {}")[0])]

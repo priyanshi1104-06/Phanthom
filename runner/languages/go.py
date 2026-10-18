@@ -9,16 +9,19 @@ verdict. Returning a non-nil error is Go's ordinary error handling: the call is 
 What can't be recovered is read from stderr: stack overflow (the harness caps the stack at 16 MB, so
 infinite recursion fails fast and inside the memory limit), deadlock, concurrent map writes, a panic
 in another goroutine. A run that hangs gets SIGQUIT shortly before the hard timeout, so Go prints
-every goroutine's stack and the timeout points at the looping line.
+every goroutine's stack and the timeout points at the loop it was caught in (its header line).
+The package is built without inlining (-gcflags=-l), so frames stay in the user's functions.
 
 Inputs are Go literals of the declared parameter types (untyped constants convert, composite literals
 spell out their type). A nil slice is just an empty slice; a nil map or pointer, a struct's zero value
 and extreme integers carry an assumption. Index-like parameters (i, idx, start, end, ...) stay inside
 the first slice/array/string parameter, or the input says that they may not.
 
-The phantom-go image holds a prebuilt standard library in a read-only GOCACHE. Go writes to its cache
-during every build (and fails when it can't), so the build first links that cache into a writable
-copy made of symlinks (~30 ms) instead of rebuilding the standard library (~9 s).
+The two files are built as a file list without a go.mod, so the language version is the toolchain's.
+The phantom-go image holds a prebuilt standard library in a read-only GOCACHE, and a read-only cache
+breaks builds: Go indexes any package whose files are over 2 s old into the cache, which happens
+when the machine is busy. So the build first links that cache into a writable copy made of symlinks
+(~30 ms) instead of rebuilding the standard library (~9 s).
 """
 import re
 from collections import Counter
@@ -71,7 +74,7 @@ USER_FRAME = re.compile(r"(?:^|[\s/])main\.go:(\d+)", re.MULTILINE)
 BUILD = ('if [ -z "${GOCACHE:-}" ]; then export GOCACHE=/tmp/phantom-go-cache; '
          'elif [ ! -w "$GOCACHE" ]; then cp -rs "$GOCACHE" .gocache && date +%s > .gocache/trim.new '
          '&& mv -f .gocache/trim.new .gocache/trim.txt && export GOCACHE="$PWD/.gocache"; fi; '
-         'go build -gcflags=-l -ldflags="-s -w" -o prog main.go phantom_harness.go')  # -l: frames stay the user's
+         'go build -gcflags=-l -ldflags="-s -w" -o prog main.go phantom_harness.go')
 
 HARNESS = """package main
 
@@ -387,7 +390,7 @@ class Go(Language):
                 piece = self.text(part)
                 if part.type != "escape_sequence":
                     size += len(piece.encode())
-                elif piece[1] in "uU":
+                elif piece[1] in "uU" and re.fullmatch(r"[0-9a-fA-F]+", piece[2:]):
                     size += len(chr(min(int(piece[2:], 16), 0x10FFFF)).encode(errors="replace"))
                 else:
                     size += 1

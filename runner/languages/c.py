@@ -15,6 +15,7 @@ together, so an input never claims more elements than it has. NULL, extreme inte
 arrays whose length nothing states carry assumptions.
 """
 import re
+from collections import namedtuple
 
 from runner.languages.base import MAX_INPUTS, RESULT_MARK, Function, Input, Language, Param
 
@@ -44,6 +45,8 @@ SANITIZER_ENV = {
     "ASAN_OPTIONS": "detect_leaks=0:handle_abort=1:abort_on_error=0:symbolize=1:color=never:print_summary=1",
     "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1:symbolize=1:color=never",
 }
+# one parameter value; size = an array's element count, a string's length or an integer's value
+Value = namedtuple("Value", "expr assumption size", defaults=(None, None))
 NUMBER = re.compile(r"[+-]?(0[xX][0-9a-fA-F]+|0[bB][01]+|(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?)[uUlLfF]{0,3}")
 UBSAN = (  # first matching phrase of a "runtime error:" line -> error name
     ("signed integer overflow", "signed integer overflow"), ("negation of", "signed integer overflow"),
@@ -67,7 +70,7 @@ class C(Language):
     grammar = "c"
     image = "gcc:15"
     local_tool = "gcc"
-    memory = "768m"
+    memory = "512m"  # cc1 needs ~40 MB, a sanitized run ~10 MB of RSS (ASan's shadow is reserved, not used)
     tmpfs = "256m"
     env = SANITIZER_ENV
     build_timeout = 60.0
@@ -77,6 +80,9 @@ class C(Language):
     cpp = False
     null_words = ("NULL",)
     null = "NULL"
+    literal_nodes = frozenset({"number_literal", "string_literal", "concatenated_string", "char_literal", "true",
+                               "false", "null", "identifier", "unary_expression", "parenthesized_expression",
+                               "compound_literal_expression"})  # each checked further in _literal_node
     literal_names = LIMITS | {"INFINITY", "NAN", "FLT_MAX", "DBL_MAX", "FLT_MIN", "DBL_MIN"}
     literal_hint = ("numbers (also -1, 1.5, 0x1F), 'c' chars, \"strings\", true/false, NULL, limit macros "
                     "such as INT_MAX or SIZE_MAX, and arrays as compound literals: (int[]){1, 2, 3}, "
@@ -463,12 +469,13 @@ class C(Language):
             return {**facts, "size": self._strlen(arg[0]) if arg else 0, "terminated": True}
         value = node.child_by_field_name("value") if node.type == "compound_literal_expression" else node
         items = [c for c in value.named_children if c.type != "comment"] if value is not None else []
-        array = node.type == "compound_literal_expression" and "[" in self.text(node.child_by_field_name("type"))
+        type_text = self.text(node.child_by_field_name("type")) if node.type == "compound_literal_expression" else ""
+        array = "[" in type_text
         if len(items) == 1 and items[0].type in ("string_literal", "concatenated_string") and (
-                array or node.type == "compound_literal_expression" and "string" in self.text(node.child_by_field_name("type"))):
+                array or "string" in type_text):  # (char[]){"abc"}, std::string{"abc"}
             return {**facts, "array": array, "size": self._strlen(items[0]), "terminated": True}
         size = len(items)
-        declared = re.search(r"\[(\d+)\]", self.text(node.child_by_field_name("type")) or "") if array else None
+        declared = re.search(r"\[(\d+)\]", type_text)
         if declared:
             size = max(size, int(declared.group(1)))
         last = self.text(items[-1]) if items else ""
@@ -507,6 +514,8 @@ class C(Language):
         if pointer_items:  # elements of (const char *[]){...}: strings only, never NULL or 0
             return kind in ("string_literal", "concatenated_string") and self._literal_node(node) or \
                 kind == "compound_literal_expression" and self._compound(node, char_array_only=True)
+        if kind not in self.literal_nodes:
+            return False
         if kind == "number_literal":
             return bool(NUMBER.fullmatch(self.text(node)))
         if kind == "string_literal":
@@ -527,11 +536,11 @@ class C(Language):
             return len(node.named_children) == 1 and self._literal_node(node.named_children[0])
         if kind == "compound_literal_expression":
             return self._compound(node)
-        if kind == "initializer_list" and self.cpp:
+        if kind == "initializer_list":
             return self._items(node)
-        if kind == "call_expression" and self.cpp:  # std::string("abc"): one string literal, nothing else
+        if kind == "call_expression":  # std::string("abc"): one string literal, nothing else
             args = node.child_by_field_name("arguments").named_children
-            return self.text(node.child_by_field_name("function")) == "std::string" and len(args) == 1 and \
+            return self.text(node.child_by_field_name("function")) in self.literal_calls and len(args) == 1 and \
                 args[0].type in ("string_literal", "concatenated_string") and self._literal_node(args[0])
         return False
 
@@ -592,7 +601,8 @@ class C(Language):
         main = self.harness_main.replace("CASES", "\n".join(cases))
         harness = (f'#define main phantom_user_main\n#include "user.{self.ext}"\n#undef main\n'
                    f"{self.harness_head}\n" + "\n".join(bodies) + f"\n{main}")
-        files = {f"user.{self.ext}": source, f"phantom_main.{self.ext}": harness, f"phantom_rt.{self.ext}": self.runtime}
+        files = {f"user.{self.ext}": source, f"phantom_main.{self.ext}": harness,
+                 f"phantom_rt.{self.ext}": self.runtime}
         return {"files": files, "build": f"{self.compiler} -o prog phantom_main.{self.ext} phantom_rt.{self.ext} -lm",
                 "run": "./prog {i}"}
 
@@ -691,8 +701,10 @@ void phantom_result(const char *text, size_t n) {
     printf("}\n");
     fflush(stdout);
 }
-static void phantom_at_exit(void) {
-    if (!phantom_reported) phantom_result("exit() was called", 17);  /* deliberate, not a crash */
+static void phantom_at_exit(void) {  /* the code called exit(): deliberate, so never a finding */
+    if (!phantom_reported)
+        printf("\nRESULT_MARK{\"ok\": false, \"kind\": \"no_verdict\", \"error\": \"NoVerdict\", "
+               "\"message\": \"the code called exit() instead of returning\"}\n");
 }
 int phantom_begin(int argc, char **argv) {
     atexit(phantom_at_exit);
@@ -789,15 +801,6 @@ void phantom_value(const void *p) { (void)p; phantom_result("(value)", 7); }
         if frames and "stack-overflow" in text:  # the recursive call, not wherever the stack happened to run out
             return int(max(frames, key=frames.count))
         return int(hits[0]) if hits else None
-
-
-class Value(tuple):
-    """(expr, assumption, size): size is an array's element count, a string's length or an int's value."""
-
-    def __new__(cls, expr, assumption=None, size=None):
-        return super().__new__(cls, (expr, assumption, size))
-
-    expr, assumption, size = (property(lambda self, i=i: self[i]) for i in range(3))
 
 
 def split_type(text):
