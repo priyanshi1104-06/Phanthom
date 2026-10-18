@@ -3,10 +3,13 @@
     languages.get("go"), languages.for_vscode("typescript"), languages.for_path("app/main.rs")
 """
 import importlib
+import logging
 import pkgutil
 from pathlib import PurePath
 
 from runner.languages.base import Language
+
+BROKEN = {}  # plugin module -> why it didn't load (one broken plugin must not take the others down)
 
 
 def _load():
@@ -14,7 +17,12 @@ def _load():
     for info in pkgutil.iter_modules(__path__):
         if info.name == "base":
             continue
-        module = importlib.import_module(f"{__name__}.{info.name}")
+        try:
+            module = importlib.import_module(f"{__name__}.{info.name}")
+        except Exception as exc:
+            BROKEN[info.name] = f"{type(exc).__name__}: {exc}"
+            logging.getLogger("phantom").warning("language plugin %s not loaded: %s", info.name, BROKEN[info.name])
+            continue
         for value in vars(module).values():
             if isinstance(value, type) and issubclass(value, Language) and value.name:
                 plugins.setdefault(value.name, value())

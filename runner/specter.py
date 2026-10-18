@@ -191,7 +191,7 @@ def confirm(lang, source, fn, sandbox, inputs, results, base):
             rank = (len(inp.assumptions), inp.origin != "edge", len(", ".join(inp.args)))
             groups.setdefault((res.get("kind"), res.get("error"), res.get("line")), []).append((rank, inp, res))
     findings = []
-    for candidates in sorted(groups.values(), key=min):
+    for candidates in sorted(groups.values(), key=lambda group: min(rank for rank, _, _ in group)):
         for _, inp, res in sorted(candidates, key=lambda c: c[0])[:REPLAY_TRIES]:
             replay = lang.run_inputs(source, fn, [inp], sandbox)[0]
             if replay.get("ok") is False and replay.get("kind") == res["kind"] and replay.get("error") == res["error"]:

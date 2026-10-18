@@ -68,6 +68,13 @@ class CheckTest(unittest.TestCase):
         findings = specter.check_function(fake, "src", FN, "docker", model(["13"]))
         self.assertEqual([f["input"]["call"] for f in findings], ["f(null)"])
 
+    def test_inputs_that_tie_on_rank_are_grouped_without_comparing_them(self):
+        results = [{"ok": False, "kind": "exception", "error": "Boom", "message": "", "line": 2}] * 2
+        inputs = [Input(["13"]), Input(["14"])]  # same assumptions, origin and length
+        fake = Fake()
+        findings = specter.confirm(fake, "src", FN, "docker", inputs, results, {"function": "f"})
+        self.assertEqual([f["input"]["call"] for f in findings], ["f(13)"])
+
     def test_code_that_never_builds_is_an_error(self):
         findings = specter.check_function(Fake(compiles=lambda inputs: False), "src", FN, "docker")
         self.assertEqual(findings[0]["status"], "error")
