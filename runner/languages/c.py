@@ -458,8 +458,8 @@ class C(Language):
                 return {**facts, "value": int(re.sub(r"[uUlL]+$", "", self.text(node)), 0)}
             except ValueError:
                 return facts
-        if node.type == "char_literal":
-            return {**facts, "value": None}
+        if node.type in ("char_literal", "true", "false", "null", "identifier"):
+            return facts
         if node.type == "unary_expression" and node.named_children[0].type == "number_literal":
             inner = self._facts(self.text(node.named_children[0]))
             return {**inner, "value": -inner["value"] if inner["value"] is not None and self.text(node)[0] == "-"
@@ -472,7 +472,7 @@ class C(Language):
         type_text = self.text(node.child_by_field_name("type")) if node.type == "compound_literal_expression" else ""
         array = "[" in type_text
         if len(items) == 1 and items[0].type in ("string_literal", "concatenated_string") and (
-                array or "string" in type_text):  # (char[]){"abc"}, std::string{"abc"}
+                array or type_text == "std::string"):  # (char[]){"abc"}, std::string{"abc"}
             return {**facts, "array": array, "size": self._strlen(items[0]), "terminated": True}
         size = len(items)
         declared = re.search(r"\[(\d+)\]", type_text)
