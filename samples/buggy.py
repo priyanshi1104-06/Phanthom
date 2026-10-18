@@ -1,7 +1,7 @@
-"""Ten deliberately buggy functions: Phanthom should find a failing input for each.
+"""Ten deliberately buggy functions: Phantom should find a failing input for each.
 
 Each docstring names the bug. is_leap_year is the honest exception: it never crashes, it just
-answers wrong for 1900, so finding it needs an intent check (Balanced tier), not a crash search.
+answers wrong for 1900, so finding it needs an intent check (Analyst), not a crash search.
 """
 
 

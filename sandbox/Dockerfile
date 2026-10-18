@@ -1,5 +1,5 @@
-# Phanthom sandbox: the image the worker runs in.
-# Build from the repo root:  docker build -f sandbox/Dockerfile -t phanthom-sandbox .
+# Phantom sandbox: the image the worker runs in.
+# Build from the repo root:  docker build -f sandbox/Dockerfile -t phantom-sandbox .
 # runner/executor.py adds the lockdown at run time: no network, memory cap, read-only filesystem.
 FROM python:3.14-slim
 COPY sandbox/requirements.txt /app/requirements.txt

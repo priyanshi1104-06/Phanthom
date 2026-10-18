@@ -51,7 +51,7 @@ export function bugMessage(bug: ConfirmedBug): string {
 }
 
 export function lensTitle(bug: ConfirmedBug): string {
-  return `$(bug) Phanthom: confirmed ${bug.failure.error}  ▶ Replay ${bug.input.call}`;
+  return `$(bug) Phantom: confirmed ${bug.failure.error}  ▶ Replay ${bug.input.call}`;
 }
 
 /** Where to put the squiggle: the failing line, else the def line; 0-based, inside the document. */
@@ -94,7 +94,7 @@ export function describeReplay(call: string, result: ReplayResult): { summary: s
 export function statusText(bugs: number, sandbox: string | undefined): string {
   const where = sandbox === 'docker' ? 'sandboxed' : 'not sandboxed';
   if (bugs === 0) {
-    return `$(check) Phanthom (${where})`;
+    return `$(check) Phantom (${where})`;
   }
-  return `$(bug) Phanthom: ${bugs} confirmed (${where})`;
+  return `$(bug) Phantom: ${bugs} confirmed (${where})`;
 }

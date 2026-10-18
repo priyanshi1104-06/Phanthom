@@ -1,9 +1,9 @@
 {
-  "name": "phanthom",
-  "displayName": "Phanthom",
+  "name": "phantom",
+  "displayName": "Phantom",
   "description": "Finds bugs in Python while you type, and backs each one with a failing input.",
   "version": "0.1.0",
-  "publisher": "phanthom",
+  "publisher": "phantom",
   "license": "UNLICENSED",
   "private": true,
   "engines": {
@@ -19,38 +19,38 @@
   "contributes": {
     "commands": [
       {
-        "command": "phanthom.analyze",
-        "title": "Phanthom: Analyse This File Now"
+        "command": "phantom.analyze",
+        "title": "Phantom: Analyse This File Now"
       },
       {
-        "command": "phanthom.replay",
-        "title": "Phanthom: Replay Failing Input"
+        "command": "phantom.replay",
+        "title": "Phantom: Replay Failing Input"
       },
       {
-        "command": "phanthom.showOutput",
-        "title": "Phanthom: Show Output"
+        "command": "phantom.showOutput",
+        "title": "Phantom: Show Output"
       }
     ],
     "configuration": {
-      "title": "Phanthom",
+      "title": "Phantom",
       "properties": {
-        "phanthom.enabled": {
+        "phantom.enabled": {
           "type": "boolean",
           "default": true,
           "description": "Analyse Python files while you type."
         },
-        "phanthom.backendUrl": {
+        "phantom.backendUrl": {
           "type": "string",
           "default": "http://127.0.0.1:8765",
-          "description": "Address of the Phanthom backend (python -m backend)."
+          "description": "Address of the Phantom backend (python -m backend)."
         },
-        "phanthom.debounceMs": {
+        "phantom.debounceMs": {
           "type": "number",
           "default": 700,
           "minimum": 100,
           "description": "How long to wait after you stop typing before analysing."
         },
-        "phanthom.shadowRun": {
+        "phantom.shadowRun": {
           "type": "boolean",
           "default": true,
           "description": "Run each function on generated inputs in the sandbox to find confirmed, reproducible bugs."

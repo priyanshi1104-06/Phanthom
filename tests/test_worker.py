@@ -1,6 +1,8 @@
-"""The worker, driven through the executor exactly as Phanthom uses it (a separate local process)."""
+"""The worker, driven through the executor exactly as Phantom uses it (a separate local process)."""
 import math
+import os
 import unittest
+from unittest import mock
 
 import worker  # only for the pure JSON helpers: no analysed code runs in this process
 from runner.executor import run_job
@@ -78,6 +80,11 @@ class CallTest(unittest.TestCase):
     def test_memory_is_capped(self):
         result = call("def hog():\n    return len(bytearray(4 * 1024 ** 3))\n", "hog", [])
         self.assertEqual(result["error"], "MemoryError")
+
+    def test_secrets_in_the_backend_environment_do_not_reach_the_code(self):
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-must-not-leak"}):
+            result = call("import os\ndef peek():\n    return os.environ.get('ANTHROPIC_API_KEY')\n", "peek", [])
+        self.assertEqual(result, {"ok": True, "result": None})
 
     def test_tagged_arguments_arrive_exactly(self):
         source = "def kinds(t, s, b, f):\n    return [type(t).__name__, type(s).__name__, b, f != f]\n"

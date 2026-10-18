@@ -28,7 +28,7 @@ class SamplesTest(unittest.TestCase):
             with self.subTest(function=name):
                 self.assertEqual(findings[name]["status"], "bug")
                 self.assertEqual(findings[name]["failure"]["error"], error)
-        # A wrong answer without a crash needs an intent check (Balanced tier), not a crash search.
+        # A wrong answer without a crash needs an intent check (Analyst), not a crash search.
         self.assertEqual(findings["is_leap_year"]["status"], "no_bug_found")
         self.assertGreaterEqual(sum(f["status"] == "bug" for f in findings.values()), 8)
 

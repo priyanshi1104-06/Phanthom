@@ -1,10 +1,10 @@
 {
-  // F5 with "Phanthom: backend + extension" starts the backend and a second VS Code window
+  // F5 with "Phantom: backend + extension" starts the backend and a second VS Code window
   // (the "Extension Development Host") with the extension loaded and samples/ open.
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Phanthom backend",
+      "name": "Phantom backend",
       "type": "debugpy",
       "request": "launch",
       "module": "backend",
@@ -14,7 +14,7 @@
       "justMyCode": true
     },
     {
-      "name": "Phanthom extension",
+      "name": "Phantom extension",
       "type": "extensionHost",
       "request": "launch",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}/extension", "${workspaceFolder}/samples"],
@@ -24,8 +24,8 @@
   ],
   "compounds": [
     {
-      "name": "Phanthom: backend + extension",
-      "configurations": ["Phanthom backend", "Phanthom extension"],
+      "name": "Phantom: backend + extension",
+      "configurations": ["Phantom backend", "Phantom extension"],
       "stopAll": true
     }
   ]

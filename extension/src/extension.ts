@@ -1,4 +1,4 @@
-// Phanthom for VS Code: when you pause typing in a Python file, ask the backend for
+// Phantom for VS Code: when you pause typing in a Python file, ask the backend for
 //   1. static checks (milliseconds)  -> yellow squiggles, hints only
 //   2. a shadow run (seconds)        -> red squiggles, only for failures reproduced in the sandbox
 // and show a "Replay" link above each function with a confirmed bug.
@@ -19,15 +19,15 @@ interface FileState {
 const RETRY_MS = 5000;
 
 export function activate(context: vscode.ExtensionContext): void {
-  const phanthom = new Phanthom();
-  context.subscriptions.push(phanthom);
+  const phantom = new Phantom();
+  context.subscriptions.push(phantom);
 }
 
 export function deactivate(): void {}
 
-class Phanthom implements vscode.CodeLensProvider, vscode.Disposable {
-  private readonly diagnostics = vscode.languages.createDiagnosticCollection('phanthom');
-  private readonly output = vscode.window.createOutputChannel('Phanthom');
+class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
+  private readonly diagnostics = vscode.languages.createDiagnosticCollection('phantom');
+  private readonly output = vscode.window.createOutputChannel('Phantom');
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
   private readonly lensesChanged = new vscode.EventEmitter<void>();
   private readonly files = new Map<string, FileState>();
@@ -39,7 +39,7 @@ class Phanthom implements vscode.CodeLensProvider, vscode.Disposable {
   readonly onDidChangeCodeLenses = this.lensesChanged.event;
 
   constructor() {
-    this.status.command = 'phanthom.showOutput';
+    this.status.command = 'phantom.showOutput';
     this.disposables.push(
       this.diagnostics, this.output, this.status, this.lensesChanged,
       vscode.languages.registerCodeLensProvider({ language: 'python' }, this),
@@ -48,18 +48,18 @@ class Phanthom implements vscode.CodeLensProvider, vscode.Disposable {
       vscode.workspace.onDidCloseTextDocument((doc) => this.forget(doc)),
       vscode.window.onDidChangeActiveTextEditor(() => this.updateStatus()),
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration('phanthom')) {
+        if (e.affectsConfiguration('phantom')) {
           this.restart();
         }
       }),
-      vscode.commands.registerCommand('phanthom.analyze', () => {
+      vscode.commands.registerCommand('phantom.analyze', () => {
         const doc = vscode.window.activeTextEditor?.document;
         if (doc) {
           this.schedule(doc, 0);
         }
       }),
-      vscode.commands.registerCommand('phanthom.replay', (uri?: vscode.Uri, bug?: ConfirmedBug) => this.replay(uri, bug)),
-      vscode.commands.registerCommand('phanthom.showOutput', () => this.output.show()),
+      vscode.commands.registerCommand('phantom.replay', (uri?: vscode.Uri, bug?: ConfirmedBug) => this.replay(uri, bug)),
+      vscode.commands.registerCommand('phantom.showOutput', () => this.output.show()),
     );
     this.restart();
   }
@@ -75,7 +75,7 @@ class Phanthom implements vscode.CodeLensProvider, vscode.Disposable {
   // ---------- when to analyse ----------
 
   private config() {
-    const c = vscode.workspace.getConfiguration('phanthom');
+    const c = vscode.workspace.getConfiguration('phantom');
     return {
       enabled: c.get<boolean>('enabled', true),
       backendUrl: c.get<string>('backendUrl', 'http://127.0.0.1:8765').replace(/\/+$/, ''),
@@ -201,7 +201,7 @@ class Phanthom implements vscode.CodeLensProvider, vscode.Disposable {
     const start = new vscode.Position(line, Math.min(f.col, doc.lineAt(line).text.length));
     const range = doc.getWordRangeAtPosition(start) ?? doc.lineAt(line).range;
     const diagnostic = new vscode.Diagnostic(range, f.message, vscode.DiagnosticSeverity.Warning);
-    diagnostic.source = 'Phanthom (static)';
+    diagnostic.source = 'Phantom (static)';
     diagnostic.code = f.rule;
     return diagnostic;
   }
@@ -210,7 +210,7 @@ class Phanthom implements vscode.CodeLensProvider, vscode.Disposable {
     const line = doc.lineAt(bugLine(bug, doc.lineCount));
     const range = new vscode.Range(line.lineNumber, line.firstNonWhitespaceCharacterIndex, line.lineNumber, line.text.length);
     const diagnostic = new vscode.Diagnostic(range, bugMessage(bug), vscode.DiagnosticSeverity.Error);
-    diagnostic.source = 'Phanthom';
+    diagnostic.source = 'Phantom';
     diagnostic.code = 'confirmed';
     return diagnostic;
   }
@@ -229,7 +229,7 @@ class Phanthom implements vscode.CodeLensProvider, vscode.Disposable {
       return new vscode.CodeLens(doc.lineAt(line).range, {
         title: lensTitle(bug),
         tooltip: 'Run this failing input again in a fresh sandbox, against the code as it is now',
-        command: 'phanthom.replay',
+        command: 'phantom.replay',
         arguments: [doc.uri, bug],
       });
     });
@@ -242,10 +242,10 @@ class Phanthom implements vscode.CodeLensProvider, vscode.Disposable {
       return;
     }
     if (this.offline) {
-      this.status.text = '$(debug-disconnect) Phanthom: backend offline';
+      this.status.text = '$(debug-disconnect) Phantom: backend offline';
       this.status.tooltip = 'Start the backend in a terminal: python -m backend';
     } else if (this.running > 0) {
-      this.status.text = '$(sync~spin) Phanthom';
+      this.status.text = '$(sync~spin) Phantom';
       this.status.tooltip = 'Analysing...';
     } else {
       this.status.text = statusText(this.files.get(doc.uri.toString())?.bugs.length ?? 0, this.sandbox);
@@ -276,20 +276,20 @@ class Phanthom implements vscode.CodeLensProvider, vscode.Disposable {
     const call = bug.input.call;
     try {
       const result = await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: `Phanthom: replaying ${call} in a fresh sandbox...` },
+        { location: vscode.ProgressLocation.Notification, title: `Phantom: replaying ${call} in a fresh sandbox...` },
         () => this.post<ReplayResult>('/replay', { source: doc.getText(), function: bug.function, args: bug.input.args }));
       const { summary, details } = describeReplay(call, result);
       this.log(`Replay: ${summary}${details ? '\n' + details : ''}`);
       if (result.ok === true) {
-        void vscode.window.showInformationMessage(`Phanthom: ${summary}`);
+        void vscode.window.showInformationMessage(`Phantom: ${summary}`);
       } else {
-        const choice = await vscode.window.showWarningMessage(`Phanthom: ${summary}`, 'Show traceback');
+        const choice = await vscode.window.showWarningMessage(`Phantom: ${summary}`, 'Show traceback');
         if (choice) {
           this.output.show(true);
         }
       }
     } catch (error) {
-      void vscode.window.showErrorMessage(`Phanthom: replay failed: ${error}. Is the backend running (python -m backend)?`);
+      void vscode.window.showErrorMessage(`Phantom: replay failed: ${error}. Is the backend running (python -m backend)?`);
     }
     this.schedule(doc, 0);
   }

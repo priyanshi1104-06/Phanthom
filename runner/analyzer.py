@@ -64,7 +64,7 @@ def analyze_in_file(source, tree, func_name, analyze=analyze_function, **options
     name = missing_context(finding, top_level_names(tree))
     if name:
         finding = {"function": func_name, "status": "skipped",
-                   "reason": f"needs {name!r}, which the file defines in a way Phanthom can't extract yet"}
+                   "reason": f"needs {name!r}, which the file defines in a way Phantom can't extract yet"}
     return {**finding, "def_line": public_functions(tree).get(func_name)}
 
 

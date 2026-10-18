@@ -1,8 +1,8 @@
-"""Phanthom analysis backend: the VS Code extension sends the file it's editing, this answers.
+"""Phantom analysis backend: the VS Code extension sends the file it's editing, this answers.
 
     uvicorn backend.app:app --port 8765
 
-POST /static  {"source"}                       -> Fast tier static checks (milliseconds)
+POST /static  {"source"}                       -> Specter's static checks (milliseconds)
 POST /shadow  {"source"}                       -> shadow run of every public function (seconds)
 POST /replay  {"source", "function", "args"}   -> run one failing input again, in a fresh sandbox
 GET  /health                                   -> {"ok": true, "sandbox": "docker" | "local"}
@@ -30,12 +30,12 @@ from runner.context import function_context, public_functions
 from runner.executor import choose_sandbox
 from runner.static import static_findings
 
-SANDBOX = choose_sandbox(os.environ.get("PHANTHOM_SANDBOX", "auto"))
-MAX_EXAMPLES = int(os.environ.get("PHANTHOM_EXAMPLES", "200"))
+SANDBOX = choose_sandbox(os.environ.get("PHANTOM_SANDBOX", "auto"))
+MAX_EXAMPLES = int(os.environ.get("PHANTOM_EXAMPLES", "200"))
 CACHE_SIZE = 2000
 
-app = FastAPI(title="Phanthom")
-pool = ThreadPoolExecutor(max_workers=int(os.environ.get("PHANTHOM_JOBS", "4")))
+app = FastAPI(title="Phantom")
+pool = ThreadPoolExecutor(max_workers=int(os.environ.get("PHANTOM_JOBS", "4")))
 
 
 @app.middleware("http")
@@ -76,7 +76,7 @@ class ShadowCache:
         try:
             return future.result()
         except Exception:
-            with self.lock:  # don't cache a failure of Phanthom itself
+            with self.lock:  # don't cache a failure of Phantom itself
                 if self.futures.get(key) is future:
                     del self.futures[key]
             raise

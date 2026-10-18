@@ -1,8 +1,8 @@
-"""Phanthom shadow run from the command line.
+"""Phantom shadow run from the command line.
 
-    python phanthom.py samples/buggy.py            # every public function in the file
-    python phanthom.py samples/buggy.py -f average # just one
-    python phanthom.py samples/buggy.py --json     # findings as JSON (the repro format)
+    python phantom.py samples/buggy.py            # every public function in the file
+    python phantom.py samples/buggy.py -f average # just one
+    python phantom.py samples/buggy.py --json     # findings as JSON (the repro format)
 
 Exit code: 0 = no confirmed bug, 1 = at least one confirmed bug, 2 = usage or analysis error.
 """

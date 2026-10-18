@@ -1,4 +1,4 @@
-"""Correct functions: Phanthom must report nothing here (false-positive check)."""
+"""Correct functions: Phantom must report nothing here (false-positive check)."""
 
 
 def safe_average(values: list[int]) -> float:

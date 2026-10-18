@@ -18,14 +18,14 @@ async function waitFor<T>(what: string, get: () => T | Promise<T>, done: (value:
   return value;
 }
 
-const confirmed = (uri: vscode.Uri) => vscode.languages.getDiagnostics(uri).filter((d) => d.source === 'Phanthom');
+const confirmed = (uri: vscode.Uri) => vscode.languages.getDiagnostics(uri).filter((d) => d.source === 'Phantom');
 
 export async function run(): Promise<void> {
-  await vscode.workspace.getConfiguration('phanthom').update(
-    'backendUrl', process.env.PHANTHOM_TEST_BACKEND, vscode.ConfigurationTarget.Global);
+  await vscode.workspace.getConfiguration('phantom').update(
+    'backendUrl', process.env.PHANTOM_TEST_BACKEND, vscode.ConfigurationTarget.Global);
 
   // 1. Open the samples: every bug Phase 1 finds shows up as a confirmed squiggle.
-  const uri = vscode.Uri.file(path.join(process.env.PHANTHOM_REPO!, 'samples', 'buggy.py'));
+  const uri = vscode.Uri.file(path.join(process.env.PHANTOM_REPO!, 'samples', 'buggy.py'));
   const doc = await vscode.workspace.openTextDocument(uri);
   await vscode.window.showTextDocument(doc);
   const bugs = await waitFor('9 confirmed bugs', () => confirmed(uri), (d) => d.length === 9);
@@ -36,7 +36,7 @@ export async function run(): Promise<void> {
 
   // 2. A "Replay" link above each function with a confirmed bug.
   const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', uri);
-  const replays = lenses.filter((lens) => lens.command?.command === 'phanthom.replay');
+  const replays = lenses.filter((lens) => lens.command?.command === 'phantom.replay');
   assert.equal(replays.length, 9);
   assert.ok(replays.some((lens) => lens.command!.title.includes('Replay average([])')));
 
@@ -52,7 +52,7 @@ export async function run(): Promise<void> {
   const scratch = await vscode.workspace.openTextDocument({ language: 'python', content: 'def f():\n    return nope\n' });
   await vscode.window.showTextDocument(scratch);
   const hints = await waitFor('a static hint', () => vscode.languages.getDiagnostics(scratch.uri), (d) => d.length > 0);
-  assert.equal(hints[0].source, 'Phanthom (static)');
+  assert.equal(hints[0].source, 'Phantom (static)');
   assert.equal(hints[0].severity, vscode.DiagnosticSeverity.Warning);
   assert.match(hints[0].message, /undefined name 'nope'/);
 }

@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKER = ROOT / "worker.py"
-IMAGE = "phanthom-sandbox"
+IMAGE = "phantom-sandbox"
 DOCKER_FLAGS = [
     "--rm", "--interactive",
     "--network=none",
@@ -57,14 +57,22 @@ def worker_command(sandbox, container_name=None):
     return [sys.executable, "-I", "-B", str(WORKER)]
 
 
+def worker_env(sandbox, workdir):
+    """A local worker gets a bare environment: never the backend's, which holds secrets such as
+    ANTHROPIC_API_KEY that the analysed code could read. (A Docker container never sees the host's.)"""
+    if sandbox == "docker":
+        return None  # the docker client itself needs the normal environment
+    return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(workdir), "LANG": "C.UTF-8"}
+
+
 def run_job(job, timeout=5.0, sandbox="local"):
     """Send `job` to a fresh worker; kill it after `timeout` seconds (reported as kind "timeout")."""
-    name = f"phanthom-{uuid.uuid4().hex[:12]}" if sandbox == "docker" else None
+    name = f"phantom-{uuid.uuid4().hex[:12]}" if sandbox == "docker" else None
     # A local worker runs in a scratch dir, so nothing it writes (e.g. Hypothesis' cache) lands in the project.
-    workdir = Path(tempfile.gettempdir()) / "phanthom-work"
+    workdir = Path(tempfile.gettempdir()) / "phantom-work"
     workdir.mkdir(exist_ok=True)
     proc = subprocess.Popen(
-        worker_command(sandbox, name), cwd=workdir,
+        worker_command(sandbox, name), cwd=workdir, env=worker_env(sandbox, workdir),
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, start_new_session=True,  # own process group, so a kill takes its children too
     )

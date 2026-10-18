@@ -1,8 +1,8 @@
-"""Phanthom worker: runs untrusted Python and reports what happened as one line of JSON.
+"""Phantom worker: runs untrusted Python and reports what happened as one line of JSON.
 
-Phanthom starts this file as a separate process (inside the Docker sandbox when available),
+Phantom starts this file as a separate process (inside the Docker sandbox when available),
 sends one job on stdin and reads one JSON result from the last line of stdout. The analysed
-code only ever runs here, never in Phanthom's own process.
+code only ever runs here, never in Phantom's own process.
 
 Call job - run the function once with given arguments (used to replay a repro):
     {"mode": "call", "source": "...", "func_name": "div", "args": [1, 0]}
@@ -57,7 +57,7 @@ def load_function(source, func_name):
     """exec the source into a fresh namespace and return the function called func_name."""
     # Register the source so tracebacks can show the analysed code's lines.
     linecache.cache[SNIPPET] = (len(source), None, source.splitlines(True), SNIPPET)
-    namespace = {"__name__": "__phanthom__"}
+    namespace = {"__name__": "__phantom__"}
     exec(compile(source, SNIPPET, "exec"), namespace)
     func = namespace.get(func_name)
     if not callable(func):

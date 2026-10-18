@@ -1,8 +1,8 @@
-"""Fast tier static checks: milliseconds, no code is run.
+"""Specter's static checks: milliseconds, no code is run.
 
 These are hints, not confirmed bugs: only a failing input from the shadow run is "confirmed".
 Pyflakes provides the checks; style-only messages (unused imports, ...) are dropped, since
-Phanthom looks for bugs, not lint.
+Phantom looks for bugs, not lint.
 """
 import ast
 
