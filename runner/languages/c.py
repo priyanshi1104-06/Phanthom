@@ -90,7 +90,8 @@ class C(Language):
 
     def functions(self, source):
         root = self.parse(source).root_node
-        namespaces = {self.text(n) for n in _walk(root) if n.type == "namespace_identifier"}
+        namespaces = {part for n in _walk(root) if n.type == "namespace_definition" and n.child_by_field_name("name")
+                      for part in self.text(n.child_by_field_name("name")).split("::")}
         found = []
         self._collect(root, "", found, namespaces)
         seen = set()
@@ -505,14 +506,15 @@ class C(Language):
 
     def _literal_node(self, node, pointer_items=False):
         kind = node.type
+        if pointer_items:  # elements of (const char *[]){...}: strings only, never NULL or 0
+            return kind in ("string_literal", "concatenated_string") and self._literal_node(node) or \
+                kind == "compound_literal_expression" and self._compound(node, char_array_only=True)
         if kind == "number_literal":
             return bool(NUMBER.fullmatch(self.text(node)))
         if kind == "string_literal":
             return all(c.type in ("string_content", "escape_sequence") for c in node.named_children)
         if kind == "concatenated_string":
             return all(c.type == "string_literal" and self._literal_node(c) for c in node.named_children)
-        if pointer_items:  # elements of (const char *[]){...}: strings only, never NULL or 0
-            return kind == "compound_literal_expression" and self._compound(node, char_array_only=True)
         if kind == "char_literal":
             return all(c.type in ("character", "escape_sequence") for c in node.named_children)
         if kind in ("true", "false", "null"):
@@ -551,9 +553,9 @@ class C(Language):
             inner = self._shape(m.group(1)) if m else None
             return bool(inner and inner["kind"] in ("int", "uint", "char", "bool", "float", "text")
                         and not inner["pointer"] and not inner["ref"]) and self._items(value)
-        base = [c for c in type_node.named_children if c.type in ("primitive_type", "sized_type_specifier")]
-        others = [c for c in type_node.named_children if c.type not in ("primitive_type", "sized_type_specifier",
-                                                                          "type_qualifier")]
+        names = ("primitive_type", "sized_type_specifier", "type_identifier")
+        base = [c for c in type_node.named_children if c.type in names]
+        others = [c for c in type_node.named_children if c.type not in names + ("type_qualifier",)]
         if len(base) != 1 or len(others) > 1 or not self._scalar(canonical(self.text(base[0]).split())):
             return False
         declarator = others[0] if others else None
