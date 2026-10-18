@@ -90,9 +90,9 @@ class C(Language):
 
     def functions(self, source):
         root = self.parse(source).root_node
-        self._namespaces = {self.text(n) for n in _walk(root) if n.type == "namespace_identifier"}
+        namespaces = {self.text(n) for n in _walk(root) if n.type == "namespace_identifier"}
         found = []
-        self._collect(root, "", found)
+        self._collect(root, "", found, namespaces)
         seen = set()
         for fn in found:  # one name per function: later overloads aren't run
             if fn.name in seen and not fn.skip:
@@ -100,40 +100,42 @@ class C(Language):
             seen.add(fn.name)
         return found
 
-    def _collect(self, holder, prefix, found):
+    def _collect(self, holder, prefix, found, namespaces):
         for node in holder.named_children:
             if node.type == "function_definition":
-                fn = self._function(node, prefix)
+                fn = self._function(node, prefix, namespaces)
                 if fn is not None:
                     found.append(fn)
             elif node.type in ("preproc_ifdef", "preproc_if", "declaration_list"):  # include guards, extern "C"
-                self._collect(node, prefix, found)
+                self._collect(node, prefix, found, namespaces)
             elif node.type == "linkage_specification" and node.child_by_field_name("body") is not None:
-                self._collect(node.child_by_field_name("body"), prefix, found)
+                self._collect(node.child_by_field_name("body"), prefix, found, namespaces)
             elif node.type == "namespace_definition" and node.child_by_field_name("body") is not None:
                 name = node.child_by_field_name("name")
                 self._collect(node.child_by_field_name("body"), prefix + (f"{self.text(name)}::" if name else ""),
-                              found)
+                              found, namespaces)
             elif node.type == "template_declaration":
                 inner = next((c for c in node.named_children if c.type == "function_definition"), None)
-                fn = self._function(inner, prefix) if inner is not None else None
+                fn = self._function(inner, prefix, namespaces) if inner is not None else None
                 if fn is not None:
                     fn.skip, fn.line, fn.text = "templates are not run yet", node.start_point[0] + 1, self.text(node)
                     found.append(fn)
             elif node.type in ("class_specifier", "struct_specifier") and node.child_by_field_name("body"):
                 cls = self.text(node.child_by_field_name("name")) or "<anonymous>"
                 for member in node.child_by_field_name("body").named_children:
-                    fn = self._function(member, f"{prefix}{cls}::") if member.type == "function_definition" else None
+                    fn = self._function(member, f"{prefix}{cls}::", namespaces) \
+                        if member.type == "function_definition" else None
                     if fn is not None:
                         fn.skip = "member functions are not run yet"
                         found.append(fn)
 
-    def _function(self, node, prefix):
+    def _function(self, node, prefix, namespaces):
         declarator, suffix = node.child_by_field_name("declarator"), ""
         while declarator is not None and declarator.type in ("pointer_declarator", "reference_declarator"):
             suffix += "*" if declarator.type == "pointer_declarator" else "&"
             declarator = declarator.child_by_field_name("declarator") or (declarator.named_children or [None])[-1]
-        if declarator is None or declarator.type != "function_declarator" or node.child_by_field_name("body") is None:
+        if declarator is None or declarator.type != "function_declarator" or node.child_by_field_name("body") is None \
+                or declarator.child_by_field_name("parameters") is None:
             return None
         name_node = declarator.child_by_field_name("declarator")
         name, skip = self.text(name_node), None
@@ -141,7 +143,7 @@ class C(Language):
             if name == "main" and not prefix:
                 return None  # the program's entry point: renamed away in the harness
             name = prefix + name
-        elif name_node.type == "qualified_identifier" and name.rpartition("::")[0].split("::")[-1] in self._namespaces:
+        elif name_node.type == "qualified_identifier" and name.rpartition("::")[0].split("::")[-1] in namespaces:
             name = prefix + name  # a namespace function defined outside its namespace block
         elif name_node.type == "operator_name":
             skip = "operators are not run yet"
@@ -174,7 +176,7 @@ class C(Language):
         if trailing is not None:
             return self.text(trailing).removeprefix("->").strip()
         quals = [self.text(c) for c in node.children if c.type == "type_qualifier" and self.text(c) != "constexpr"]
-        base = " ".join(quals + [" ".join(self.text(node.child_by_field_name("type")).split())])
+        base = " ".join(quals + [" ".join((self.text(node.child_by_field_name("type")) or "").split())])
         return f"{base} {suffix}" if suffix else base
 
     def _param(self, node, index):
@@ -198,9 +200,7 @@ class C(Language):
                 if inner is not None and inner.type in ("array_declarator", "abstract_array_declarator"):
                     return None, f"multi-dimensional array parameter {self.text(node)!r} is not supported yet"
                 size = decl.child_by_field_name("size")
-                stars += "*"
-                if size is not None and size.type == "number_literal" and stars == "*":
-                    base = f"{base} /*[{self.text(size)}]*/"  # the declared length is the contract
+                stars += f"[{self.text(size)}]" if size is not None and size.type == "number_literal" else "[]"
             elif decl.type in ("reference_declarator", "abstract_reference_declarator"):
                 ref = "&&" if any(c.type == "&&" for c in decl.children) else "&"
                 decl = (decl.named_children or [None])[-1] if decl.child_by_field_name("declarator") is None \
@@ -302,7 +302,7 @@ class C(Language):
                           for i in items]
             return values + [null]
         if kind == "array":
-            elem, base = shape["elem"], re.sub(r"\s*/\*.*\*/", "", shape["base"])
+            elem, base = shape["elem"], shape["base"]
             items = element_items(elem["kind"])
             if shape["size"]:  # int a[4]: exactly that many
                 n = shape["size"]
@@ -408,7 +408,8 @@ class C(Language):
         notes = []
         for p, s, a, f in zip(fn.params, shapes, made.args, facts):
             if s["pointer"] and not f["array"]:
-                notes.append(f"{p.name} may be {self.null}")  # 0, {} and friends are null pointers too
+                if a not in self.null_words:
+                    notes.append(f"{p.name} may be {self.null}")  # 0, {} and friends are null pointers too
             elif s["kind"] == "string" and fn.params.index(p) not in pairs and not f["terminated"]:
                 notes.append(f"{p.name} may not be NUL-terminated")
             elif s["kind"] == "array" and uses.get(fn.params.index(p)) == "array":
@@ -464,8 +465,9 @@ class C(Language):
         value = node.child_by_field_name("value") if node.type == "compound_literal_expression" else node
         items = [c for c in value.named_children if c.type != "comment"] if value is not None else []
         array = node.type == "compound_literal_expression" and "[" in self.text(node.child_by_field_name("type"))
-        if len(items) == 1 and items[0].type in ("string_literal", "concatenated_string") and array:
-            return {**facts, "array": True, "size": self._strlen(items[0]), "terminated": True}
+        if len(items) == 1 and items[0].type in ("string_literal", "concatenated_string") and (
+                array or node.type == "compound_literal_expression" and "string" in self.text(node.child_by_field_name("type"))):
+            return {**facts, "array": array, "size": self._strlen(items[0]), "terminated": True}
         size = len(items)
         declared = re.search(r"\[(\d+)\]", self.text(node.child_by_field_name("type")) or "") if array else None
         if declared:
@@ -637,7 +639,6 @@ void phantom_char(int value);
 void phantom_string(const char *value);
 void phantom_pointer(const void *value);
 void phantom_value(const void *value);
-#define PHANTOM_VIA(T, F) static void phantom_##F##_at(const void *p) { phantom_##F(*(const T *)p); }
 static void phantom_bool_at(const void *p) { phantom_bool(*(const _Bool *)p); }
 static void phantom_char_at(const void *p) { phantom_char(*(const char *)p); }
 static void phantom_sc_at(const void *p) { phantom_signed(*(const signed char *)p); }
@@ -696,12 +697,12 @@ int phantom_begin(int argc, char **argv) {
     atexit(phantom_at_exit);
     return argc > 1 ? atoi(argv[1]) : -1;
 }
+void *phantom_alloc(size_t size) { return malloc(size); }
 void *phantom_copy(const void *data, size_t size) {
-    void *copy = malloc(size);
+    void *copy = malloc(size);  /* exactly the array's size: one element too far is a heap-buffer-overflow */
     if (size) memcpy(copy, data, size);
     return copy;
 }
-static void phantom_text(const char *format, ...);
 void phantom_void(void) { phantom_result("void", 4); }
 void phantom_signed(long long v) { char b[32]; phantom_result(b, (size_t)snprintf(b, sizeof b, "%lld", v)); }
 void phantom_unsigned(unsigned long long v) { char b[32]; phantom_result(b, (size_t)snprintf(b, sizeof b, "%llu", v)); }
@@ -806,16 +807,18 @@ class Cpp(C):
 
     def _rewrite(self, node):
         if node.type in ("string_literal", "concatenated_string"):
-            return f"phantom_arr({self.text(node)})"
+            return f"phantom_arr(0, {self.text(node)})"
         if node.type == "compound_literal_expression" and node.child_by_field_name("type").type == "type_descriptor":
             type_text = self.text(node.child_by_field_name("type"))
             items = node.child_by_field_name("value").named_children
-            if "[" not in type_text:
+            declared = re.search(r"\[(\d*)\]", type_text)
+            if declared is None:
                 return self.text(node)
+            n = declared.group(1) or "0"
             if len(items) == 1 and items[0].type in ("string_literal", "concatenated_string") and "*" not in type_text:
-                return f"phantom_arr({self.text(items[0])})"
+                return f"phantom_arr({n}, {self.text(items[0])})"
             element = re.sub(r"\[\d*\]", "", type_text).strip()
-            return f"phantom_arr<{element}>({{{', '.join(self._rewrite(c) for c in items)}}})"
+            return f"phantom_arr<{element}>({n}, {{{', '.join(self._rewrite(c) for c in items)}}})"
         return self.text(node)
 
     def _show(self, fn, call):
@@ -835,6 +838,7 @@ class Cpp(C):
 #include <exception>
 #include <utility>
 #include <initializer_list>
+#include <new>
 #ifndef INFINITY
 #define INFINITY (__builtin_inff())
 #endif
@@ -842,20 +846,26 @@ class Cpp(C):
 #define NAN (__builtin_nanf(""))
 #endif
 void *phantom_copy(const void *data, std::size_t size);
+void *phantom_alloc(std::size_t size);
 int phantom_begin(int argc, char **argv);
 void phantom_void(void);
 void phantom_result(const char *text, std::size_t n);
 std::string phantom_float_text(long double value);
 void phantom_exception(const char *type, const char *what);
 void phantom_unknown_exception(void);
-template <class T> static std::remove_const_t<T> *phantom_arr(std::initializer_list<T> items) {
-    auto *copy = static_cast<std::remove_const_t<T> *>(phantom_copy(nullptr, sizeof(T) * items.size()));
+template <class T> static T *phantom_arr(std::size_t n, std::initializer_list<T> items) {
+    n = n > items.size() ? n : items.size();  /* (int[4]){1}: 4 elements, the rest zero */
+    T *copy = static_cast<T *>(phantom_alloc(sizeof(T) * n));
     std::size_t k = 0;
-    for (const T &item : items) new (copy + k++) std::remove_const_t<T>(item);
+    for (const T &item : items) new (copy + k++) T(item);
+    for (; k < n; k++) new (copy + k) T();
     return copy;
 }
-template <class T, std::size_t N> static std::remove_const_t<T> *phantom_arr(const T (&items)[N]) {
-    return static_cast<std::remove_const_t<T> *>(phantom_copy(items, sizeof items));
+template <class T, std::size_t N> static std::remove_const_t<T> *phantom_arr(std::size_t n, const T (&items)[N]) {
+    using U = std::remove_const_t<T>;
+    U *copy = static_cast<U *>(phantom_alloc(sizeof(U) * (n > N ? n : N)));
+    for (std::size_t k = 0; k < (n > N ? n : N); k++) copy[k] = k < N ? items[k] : U();
+    return copy;
 }
 static std::string phantom_quote(const char *s, std::size_t n, char q) {
     static const char hex[] = "0123456789abcdef";
@@ -918,7 +928,7 @@ CASES
     return 0;
 }
 """
-    runtime = C.runtime.replace("void *copy = malloc(size);", "void *copy = malloc(size ? size : 1);") + r"""
+    runtime = C.runtime + r"""
 #include <string>
 #include <typeinfo>
 #include <execinfo.h>
@@ -979,9 +989,10 @@ class Value(tuple):
 
 def split_type(text):
     """'const std::vector<int> &' -> (['std::vector<int>'], 0, '&', True, None): words without
-    qualifiers, pointer depth, reference, const pointee, declared array length (int a[4])."""
-    size = re.search(r"/\*\[(\d+)\]\*/", text)
-    text = re.sub(r"/\*.*?\*/", " ", text)
+    qualifiers, pointer depth (an array parameter int a[] is a pointer), reference, const pointee,
+    declared array length (int a[4] -> 4)."""
+    size = re.search(r"\[(\d+)\]", text)
+    text = re.sub(r"\[\d*\]", "*", text)
     words, stars, ref, const_base, word, depth = [], 0, "", False, "", 0
     for ch in text + " ":
         if depth or ch.isalnum() or ch in "_:<":
@@ -1015,7 +1026,7 @@ def canonical(words):
 
 
 def declare(type_text, name):
-    type_text = re.sub(r"\s*/\*.*?\*/", "", type_text)
+    type_text = re.sub(r"\s*\[\d*\]", " *", type_text).replace("* *", "**")
     return f"{type_text}{'' if type_text.endswith('*') else ' '}{name}"
 
 
