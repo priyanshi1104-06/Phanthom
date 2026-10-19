@@ -11,7 +11,10 @@
       "cwd": "${workspaceFolder}",
       "env": { "PYTHONDONTWRITEBYTECODE": "1" },
       "subProcess": false,
-      "justMyCode": true
+      "justMyCode": true,
+      // Run, don't debug: the debugger would pause the backend on harmless internal exceptions
+      // (GeneratorExit, StopIteration) and the editor would wait forever. Remove to debug the backend.
+      "noDebug": true
     },
     {
       "name": "Phantom extension",

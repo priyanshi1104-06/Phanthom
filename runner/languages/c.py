@@ -936,6 +936,10 @@ def indexed(text, name):
 
 
 def _walk(node):
-    yield node
-    for child in node.named_children:
-        yield from _walk(child)
+    """Every named node under node, in order, as a list (see javascript._walk)."""
+    nodes, stack = [], [node]
+    while stack:
+        current = stack.pop()
+        nodes.append(current)
+        stack.extend(reversed(current.named_children))
+    return nodes

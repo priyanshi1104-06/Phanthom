@@ -785,11 +785,14 @@ def _unwrap(node):
 
 
 def _walk(node):
-    stack = [node]
+    """Every node under node, as a list (not a generator: a debugger attached to the backend stops on
+    the GeneratorExit that any() raises when it closes a generator early)."""
+    nodes, stack = [], [node]
     while stack:
         current = stack.pop()
-        yield current
+        nodes.append(current)
         stack.extend(current.children)
+    return nodes
 
 
 def _all(verdicts):
