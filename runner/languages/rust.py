@@ -9,6 +9,10 @@ Each input runs in a fresh process: the call happens inside catch_unwind on a th
 stack, a panic hook records the message, its location and a backtrace, and the panic message is
 mapped to a stable error name ("index out of bounds", "attempt to add with overflow", ...). A stack
 overflow aborts the whole process; it is reported as a crash at the function's recursive call.
+The last argument is passed through enter(), which creates `.entered` once every argument is built
+(marks_entry). std::process::exit runs an atexit hook that reports kind "exit": never a finding.
+A panic!/assert!/unreachable! on the failing line is the function rejecting its input on purpose
+(see deliberate); todo!/unimplemented! and the standard library's own panics stay bugs.
 
 Inputs are Rust literals: numbers, strings, chars, arrays, tuples, plus vec![...], Some/None,
 String::from / .to_string(), HashMap::from / HashSet::from. Integer limits (i32::MAX) need an
@@ -33,7 +37,8 @@ INDEX_WORDS = {"i", "j", "n", "k", "idx", "index", "pos", "position", "offset", 
 COUNT_WORDS = {"count", "len", "length", "size", "num", "take", "skip", "limit", "width", "window", "chunk", "end",
                "to", "stop", "until"}  # must be <= that length
 POSITION_WORDS = INDEX_WORDS - {"n", "k"} | {"end", "to", "stop", "until"}
-START_WORDS, END_WORDS = {"start", "from", "begin", "lo", "low"}, {"end", "to", "stop", "until", "hi", "high"}
+START_WORDS = {"start", "from", "begin", "lo", "low", "min", "minimum", "lower", "first"}
+END_WORDS = {"end", "to", "stop", "until", "hi", "high", "max", "maximum", "upper", "last"}
 PANICS = [  # the standard library's panic messages -> stable error names (None: the matched text)
     (r"^index out of bounds|^(removal|insertion|swap_remove) index", "index out of bounds"),
     (r"^range (start|end) index .* out of range|^slice index starts at", "slice index out of range"),
@@ -50,11 +55,21 @@ PANICS = [  # the standard library's panic messages -> stable error names (None:
     (r"^capacity overflow", None),
 ]
 SELF_CALL = "@@SELF-CALL "
+DELIBERATE = frozenset({"panic", "assertion failed", "unreachable code"})  # error names a rejection can have
+COMMENTS = frozenset({"line_comment", "block_comment", "doc_comment"})
+F32_MAX = 3.4028235e38
 
 
 def limits(type_name):
     bits = 64 if type_name.endswith("size") else int(type_name[1:])
     return (-(2 ** (bits - 1)), 2 ** (bits - 1) - 1) if type_name in SIGNED else (0, 2 ** bits - 1)
+
+
+def wrap(value, type_name):
+    """value as `type_name` after an `as` cast: two's complement wrapping."""
+    low, high = limits(type_name)
+    value %= high - low + 1
+    return value - (high - low + 1) if value > high else value
 
 
 def word(name):
@@ -73,6 +88,8 @@ class Rust(Language):
     tmpfs = "256m"
     user_file = "user"
     null_words = ("None",)
+    marks_entry = True  # enter() creates .entered after the arguments are built, right before the call
+    rejection_pattern = r"(?<![\w$])(?:(?:debug_)?assert(?:_eq|_ne)?|panic|unreachable)!\s*[(\[{]"
     literal_hint = ("Rust literals: 3, -1, 2.5, 255u8, \"text\" (for &str), 'c', true/false, (1, \"a\"), "
                     "[1, 2] or &[1, 2] (slices), vec![1, 2], &mut vec![1], String::from(\"a\") or \"a\".to_string(), "
                     "Some(1), None, HashMap::from([(\"k\", 1)]), HashSet::from([1]), i32::MAX-style constants")
@@ -161,6 +178,57 @@ class Rust(Language):
         if statement is None or statement.type != "let_declaration":
             return tree, None
         return tree, statement.child_by_field_name("value")
+
+    def literal_ok(self, expr):
+        if not super().literal_ok(expr):
+            return False
+        tree, node = self.expression_tree(expr)
+        stack = [node]
+        while stack:  # forms the checks above let through but that are never a plain value
+            item = stack.pop()
+            if not self._plain_part(item):
+                return False
+            stack.extend(item.children)
+        return True
+
+    def _plain_part(self, node):
+        """False for a comment anywhere (`String::from /* c */ ("a")`), `&raw const`, C strings, casts
+        that never compile (`1 as bool`) and number literals the compiler rejects (`1e999`, `300u8`)."""
+        kind = node.type
+        if kind in COMMENTS or kind == "raw" or (kind in STRINGS and self.text(node).startswith("c")):
+            return False
+        if kind == "type_cast_expression":
+            value, target = node.child_by_field_name("value"), self.text(node.child_by_field_name("type"))
+            if target in ("bool", "str") or (target == "char" and not re.fullmatch(r"[0-9_]+u8", self.text(value))):
+                return False  # only a u8 can become a char
+        if kind == "float_literal":
+            number = re.sub(r"f(32|64)$", "", self.text(node)).replace("_", "")
+            try:
+                value = float(number)
+            except ValueError:
+                return False
+            return value != float("inf") and not (self.text(node).endswith("f32") and value > F32_MAX)
+        if kind == "integer_literal":
+            value, suffix = self._literal_int(self.text(node))
+            if value is None:
+                return False
+            negative = node.parent is not None and node.parent.type == "unary_expression"
+            if suffix is None:
+                return value <= 2 ** 128 - 1
+            low, high = limits(suffix)
+            return -value >= low if negative else value <= high
+        return True
+
+    @staticmethod
+    def _literal_int(text):
+        """(value, suffix type or None) of an integer literal's text, or (None, None)."""
+        match = re.fullmatch(r"(0x[0-9a-fA-F_]+|0o[0-7_]+|0b[01_]+|[0-9][0-9_]*)([iu](?:8|16|32|64|128|size))?", text)
+        if not match:
+            return None, None
+        try:
+            return int(match[1].replace("_", ""), 0), match[2]
+        except ValueError:
+            return None, None
 
     def _literal_node(self, node):
         kind = node.type
@@ -332,25 +400,90 @@ class Rust(Language):
         if made is not None:
             extra = self._contract(fn, args)
             for param, arg in zip(fn.params, args):
-                kind = (param.type or "").strip()
-                value = self._int_value(arg, kind)
-                if value is not None:
+                type_node = self.type_node(param.type) if param.type else None
+                tree, node = self.expression_tree(arg)
+                # every number in the input, also inside (...), Some(...), &[...], vec![...], tuples and maps
+                for value, kind, text, inside in self._number_leaves(node, type_node):
+                    if kind in FLOATS:  # NaN, as the edge value f64::NAN
+                        extra.append(f"{param.name} may contain NaN" if inside else f"{param.name} may be NaN")
+                        continue
                     low, high = limits(kind)
                     wide = kind not in ("i8", "u8", "i16", "u16")  # past half the range: overflow is near
                     if value >= high or value <= low < 0 or wide and (value > high // 2 or value < low // 2):
-                        extra.append(f"{param.name} may be as {'large' if value > 0 else 'small'} as {arg}")
+                        size = "large" if value > 0 else "small"
+                        extra.append(f"{param.name} may contain {text}" if inside
+                                     else f"{param.name} may be as {size} as {text}")
             made.assumptions += [a for a in extra if a not in made.assumptions]
         return made
+
+    def _number_leaves(self, node, type_node, inside=False):
+        """(value, type, text, inside a collection) for each integer and each NaN of an input expression,
+        typed by the part of the parameter type it fills."""
+        if node is None or type_node is None:
+            return
+        while node.type == "parenthesized_expression" and node.named_children:
+            node = node.named_children[0]
+        kind = type_node.type
+        if kind == "reference_type":
+            if node.type == "reference_expression":
+                node = node.child_by_field_name("value")
+            yield from self._number_leaves(node, type_node.child_by_field_name("type"), inside)
+        elif kind == "primitive_type" and self.text(type_node) in SIGNED + UNSIGNED:
+            value = self._number(node)
+            if value is not None:
+                yield value, self.text(type_node), self.text(node), inside
+        elif kind == "primitive_type" and self.text(type_node) in FLOATS:
+            value = self._float(node)
+            if value is not None and value != value:
+                yield value, self.text(type_node), self.text(node), inside
+        elif kind == "array_type":
+            for item in self._items(node):
+                yield from self._number_leaves(item, type_node.child_by_field_name("element"), True)
+        elif kind == "tuple_type" and node.type == "tuple_expression":
+            for item, part in zip(node.named_children, type_node.named_children):
+                yield from self._number_leaves(item, part, inside)
+        elif kind == "generic_type":
+            head = self.text(type_node.child_by_field_name("type")).split("::")[-1].strip()
+            args = [c for c in type_node.child_by_field_name("type_arguments").named_children if c.type != "lifetime"]
+            if head == "Option" and len(args) == 1 and node.type == "call_expression" \
+                    and self.text(node.child_by_field_name("function")) == "Some":
+                for item in node.child_by_field_name("arguments").named_children:
+                    yield from self._number_leaves(item, args[0], inside)
+            elif head in ("Vec", "HashSet") and len(args) == 1:
+                for item in self._items(node):
+                    yield from self._number_leaves(item, args[0], True)
+            elif head == "HashMap" and len(args) == 2:
+                for item in self._items(node):
+                    if item.type == "tuple_expression" and len(item.named_children) == 2:
+                        for part, part_type in zip(item.named_children, args):
+                            yield from self._number_leaves(part, part_type, True)
+
+    def _items(self, node):
+        """The elements of an array, vec![...], HashSet::from([...]) or HashMap::from([...]) literal."""
+        while node is not None and node.type in ("parenthesized_expression", "reference_expression"):
+            node = node.child_by_field_name("value") or (node.named_children or [None])[-1]
+        if node is None:
+            return []
+        if node.type == "macro_invocation":
+            node = self._vec_items(node)
+        elif node.type == "call_expression" and self.text(node.child_by_field_name("function")) in ONE_ARG_CALLS:
+            args = node.child_by_field_name("arguments").named_children
+            return self._items(args[0]) if len(args) == 1 else []
+        if node is None or node.type != "array_expression":
+            return []
+        return [c for c in node.named_children if c.type not in COMMENTS]
 
     def _contract(self, fn, args):
         """Assumptions an input needs because its parameters don't fit together: an index past the end
         of the collection passed with it, a count larger than it, a start after the end. A string only
         pairs with position-like names: `n` next to a string is usually not a position in it."""
-        lengths, numbers = {}, {}
+        lengths, numbers, bounds = {}, {}, {}
         for param, arg in zip(fn.params, args):
             kind = re.sub(r"^&(mut\s+)?('\w+\s+)?", "", (param.type or "").strip())
             if kind in SIGNED or kind in UNSIGNED:
-                numbers[param.name] = self._int_value(arg, kind)
+                numbers[param.name] = bounds[param.name] = self._int_value(arg, kind)
+            elif kind in FLOATS:  # only for a start after the end: a float is never an index or a count
+                bounds[param.name] = self._float_value(arg)
             elif re.match(r"(Vec|HashMap|HashSet)\s*<|\[|str$|String$", kind):
                 length = self._length(arg)
                 if length is not None:
@@ -364,22 +497,80 @@ class Rust(Language):
             shortest = min(sizes, key=sizes.get)
             if not 0 <= value < sizes[shortest] + (0 if strict else 1):
                 notes.append(f"{name} may be out of range for {shortest}")
-        starts = [n for n in numbers if word(n) in START_WORDS and numbers[n] is not None]
-        ends = [n for n in numbers if word(n) in END_WORDS and numbers[n] is not None]
-        if starts and ends and numbers[starts[0]] > numbers[ends[0]]:
+        starts = [n for n in bounds if word(n) in START_WORDS and bounds[n] is not None]
+        ends = [n for n in bounds if word(n) in END_WORDS and bounds[n] is not None]
+        if starts and ends and bounds[starts[0]] > bounds[ends[0]]:
             notes.append(f"{starts[0]} may be after {ends[0]}")
         return notes
 
     def _int_value(self, expr, kind):
+        """The integer an input expression is, for a parameter of integer type `kind`: (3), -1,
+        i32::MAX and `300 as u8` (wrapped, as the cast does) count; None otherwise."""
         if kind not in SIGNED and kind not in UNSIGNED:
             return None
-        text = expr.strip()
-        if text.endswith(("::MAX", "::MIN")) and text.split("::")[0] in SIGNED + UNSIGNED:
+        try:
+            tree, node = self.expression_tree(expr)
+        except Exception:
+            return None
+        return None if node is None or tree.root_node.has_error else self._number(node)
+
+    def _number(self, node):
+        while node.type == "parenthesized_expression" and node.named_children:
+            node = node.named_children[0]
+        kind, text = node.type, self.text(node)
+        if kind == "integer_literal":
+            return self._literal_int(text)[0]
+        if kind == "unary_expression" and text.startswith("-") and node.named_children:
+            inner = node.named_children[0]
+            value = self._literal_int(self.text(inner))[0] if inner.type == "integer_literal" else None
+            return -value if value is not None else None
+        if kind == "scoped_identifier" and text.endswith(("::MAX", "::MIN")) and text.split("::")[0] in SIGNED + UNSIGNED:
             low, high = limits(text.split("::")[0])
             return high if text.endswith("MAX") else low
-        match = re.fullmatch(r"(-?)\s*(0x[0-9a-fA-F_]+|0o[0-7_]+|0b[01_]+|[0-9][0-9_]*)([iu](8|16|32|64|128|size))?",
-                             text)
-        return int(match[1] + match[2].replace("_", ""), 0) if match else None
+        if kind == "type_cast_expression":
+            target, value = self.text(node.child_by_field_name("type")), node.child_by_field_name("value")
+            if target not in SIGNED + UNSIGNED or value is None:
+                return None
+            number = self._number(value)
+            if number is None:
+                real = self._float(value)
+                if real is None or real != real:
+                    return 0 if real is not None else None  # NaN as an integer is 0
+                low, high = limits(target)  # a float cast saturates
+                return high if real >= high else low if real <= low else int(real)
+            return wrap(number, target)
+        return None
+
+    def _float_value(self, expr):
+        try:
+            tree, node = self.expression_tree(expr)
+        except Exception:
+            return None
+        value = None if node is None or tree.root_node.has_error else self._float(node)
+        return None if value is None or value != value else value  # NaN is never before or after anything
+
+    def _float(self, node):
+        while node.type == "parenthesized_expression" and node.named_children:
+            node = node.named_children[0]
+        kind, text = node.type, self.text(node)
+        if kind == "float_literal":
+            try:
+                return float(re.sub(r"f(32|64)$", "", text).replace("_", ""))
+            except ValueError:
+                return None
+        if kind == "unary_expression" and text.startswith("-") and node.named_children:
+            inner = self._float(node.named_children[0]) if node.named_children[0].type == "float_literal" else None
+            return -inner if inner is not None else None
+        if kind == "scoped_identifier" and text.split("::")[0] in FLOATS:
+            big = F32_MAX if text.startswith("f32") else 1.7976931348623157e308
+            return {"MAX": big, "MIN": -big, "INFINITY": float("inf"), "NEG_INFINITY": float("-inf"),
+                    "EPSILON": 1.1920929e-07 if text.startswith("f32") else 2.220446049250313e-16,
+                    "NAN": float("nan")}.get(text.split("::")[-1])
+        if kind == "type_cast_expression" and self.text(node.child_by_field_name("type")) in FLOATS:
+            value = node.child_by_field_name("value")
+            number = self._number(value) if value is not None else None
+            return float(number) if number is not None else self._float(value) if value is not None else None
+        return None
 
     def _length(self, expr):
         """Number of items in a collection literal (or chars in a string), or None."""
@@ -448,24 +639,45 @@ class Rust(Language):
         return None
 
     def program(self, source, fn, inputs):
-        arms = "\n".join(f"            {i} => (&&Show(&super::{fn.name}({', '.join(inp.args)}))).__phantom_show(),"
-                         for i, inp in enumerate(inputs))
         line = self.self_call_line(source, fn)
-        harness = HARNESS.replace("__ARMS__", arms).replace("__MARK__", RESULT_MARK).replace(
+        # the arms go in last, so an argument like "__MARK__" is never rewritten as a placeholder
+        harness = HARNESS.replace("__MARK__", RESULT_MARK).replace(
             "__SELF_CALL__", f'eprintln!("{SELF_CALL}{line}");' if line else "")
-        return {"files": {"user.rs": self.user_source(source), "main.rs": harness},
+        return {"files": {"user.rs": self.user_source(source), "main.rs": harness.replace("__ARMS__", self.arms(fn, inputs))},
                 "build": "rustc --edition 2021 -C overflow-checks=on -C debuginfo=1 -C opt-level=0 -o prog main.rs",
                 "run": "./prog {i}"}
+
+    @staticmethod
+    def arms(fn, inputs):
+        """One match arm per input. Arguments are evaluated left to right, so wrapping the last one in
+        enter() creates .entered after every argument is built and right before the call."""
+        arms = []
+        for i, inp in enumerate(inputs):
+            if inp.args:
+                args = ", ".join(inp.args[:-1] + [f"enter({inp.args[-1]})"])
+                call = f"(&&Show(&super::{fn.name}({args}))).__phantom_show()"
+            else:
+                call = f"{{ enter(()); (&&Show(&super::{fn.name}())).__phantom_show() }}"
+            arms.append(f"            {i} => {call},")
+        return "\n".join(arms)
 
     def classify(self, code, out, err):
         mark = re.search(rf"^{SELF_CALL}(\d+)$", err or "", re.MULTILINE)
         err = re.sub(rf"^{SELF_CALL}\d+\n?", "", err or "", flags=re.MULTILINE)
         result = super().classify(code, out, err)
+        if result.get("kind") == "exit":  # the atexit hook: the code called std::process::exit on purpose
+            return {**result, "error": "std::process::exit", "message": f"the code called std::process::exit({code})"}
         if result.get("kind") == "exception" and result.get("error") == "panic":
             result["error"] = panic_name(result.get("message") or "")
         if result.get("error") == "stack overflow":
             result["line"] = int(mark[1]) if mark else None
         return result
+
+    def deliberate(self, source, failure):
+        """A panic!/assert!/unreachable! on the failing line rejects the input on purpose, but only when the
+        failure came from that macro: an index or overflow panic inside `assert!(v[i] > 0)` is still a bug."""
+        return failure.get("kind") == "exception" and failure.get("error") in DELIBERATE \
+            and super().deliberate(source, failure)
 
     def crash_error(self, code, err):
         if "has overflowed its stack" in err:
@@ -492,9 +704,29 @@ mod __phantom {
     use std::fmt::Write as _;
     use std::io::Write as _;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     type Panic = (String, Option<(String, u32, u32)>, String);
     static PANIC: Mutex<Option<Panic>> = Mutex::new(None);
+    static DONE: AtomicBool = AtomicBool::new(false);  // the verdict is printed: exiting now is normal
+
+    extern "C" {
+        fn atexit(hook: extern "C" fn()) -> i32;
+        fn write(fd: i32, data: *const u8, len: usize) -> isize;
+    }
+
+    // std::process::exit runs the atexit hooks (stdout is already flushed): the code ended on purpose.
+    extern "C" fn exited() {
+        if DONE.swap(true, Ordering::SeqCst) { return; }
+        let verdict = "\n__MARK__{\"ok\": false, \"kind\": \"exit\", \"error\": \"exit\"}\n";
+        unsafe { write(1, verdict.as_ptr(), verdict.len()); }
+    }
+
+    // The last argument goes through here: every argument is built, the call comes next.
+    pub fn enter<T>(value: T) -> T {
+        let _ = std::fs::File::create(".entered");
+        value
+    }
 
     // Debug output when the result type has it, a placeholder otherwise (autoref specialization).
     pub struct Show<'a, T>(pub &'a T);
@@ -529,7 +761,10 @@ mod __phantom {
                 '"' => out.push_str("\\\""),
                 '\\' => out.push_str("\\\\"),
                 '\n' => out.push_str("\\n"),
-                c if (c as u32) < 0x20 => { let _ = write!(out, "\\u{:04x}", c as u32); }
+                // U+0085, U+2028 and U+2029 count as line breaks for Python's splitlines()
+                c if (c as u32) < 0x20 || c == '\u{85}' || c == '\u{2028}' || c == '\u{2029}' => {
+                    let _ = write!(out, "\\u{:04x}", c as u32);
+                }
                 c => out.push(c),
             }
         }
@@ -547,6 +782,7 @@ __ARMS__
     pub fn run() {
         let i = std::env::args().nth(1).and_then(|a| a.parse::<usize>().ok()).unwrap_or(usize::MAX);
         __SELF_CALL__
+        unsafe { atexit(exited); }
         std::panic::set_hook(Box::new(|info| {
             let payload = info.payload();
             let message = match (payload.downcast_ref::<&str>(), payload.downcast_ref::<String>()) {
@@ -565,6 +801,7 @@ __ARMS__
             Ok(Ok(text)) => format!("{{\"ok\": true, \"result\": {}}}", json(&text)),
             _ => failure(),
         };
+        DONE.store(true, Ordering::SeqCst);
         let mut out = std::io::stdout().lock();
         let _ = write!(out, "\n__MARK__{}\n", verdict);
         let _ = out.flush();
