@@ -58,7 +58,7 @@ class CallTest(unittest.TestCase):
 
     def test_sys_exit_is_a_failure_not_a_crash(self):
         result = call("import sys\ndef quit_(x):\n    sys.exit(3)\n", "quit_", [1])
-        self.assertEqual((result["kind"], result["error"]), ("exception", "SystemExit"))
+        self.assertEqual((result["kind"], result["error"]), ("exit", "SystemExit"))  # ended on purpose: not a bug
 
     def test_syntax_error_is_reported(self):
         result = call("def broken(:\n    pass\n", "broken", [])

@@ -117,14 +117,15 @@ class BackendTest(unittest.TestCase):
         self.assertLess(time.monotonic() - start, cold)
 
     def test_other_languages_by_language_id_or_path(self):
-        source = "function average(values) {\n  return values.reduce((a, b) => a + b) / values.length;\n}\n"
+        source = ("/** @param {number[]} values */\nfunction average(values) {\n"
+                  "  return values.reduce((a, b) => a + b) / values.length;\n}\n")
         for request in ({"language": "javascript"}, {"path": "/w/stats.js"}):
             answer = self.client.post("/specter", json={"source": source, "model": False, **request}).json()
             if answer.get("setup"):
                 self.skipTest("no JavaScript sandbox")
             bug = next(f for f in answer["findings"] if f["status"] == "bug" and f["severity"] == "error")
             self.assertEqual((bug["input"]["exprs"], bug["failure"]["error"], bug["failure"]["line"]),
-                             (["[]"], "TypeError", 2))
+                             (["[]"], "TypeError", 3))
         replayed = self.client.post("/replay", json={"source": source, "language": "javascript",
                                                      "function": "average", "input": {"exprs": ["[]"]}}).json()
         self.assertEqual((replayed["ok"], replayed["error"]), (False, "TypeError"))

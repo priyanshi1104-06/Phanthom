@@ -191,7 +191,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(specter.replay(source, "java", "Buggy.average", {"exprs": ["new int[]{2, 4}"]}),
                          {"ok": True, "result": "3"})
         broken = specter.replay(source, "java", "Buggy.spread", {"exprs": ["List.of(null)"]})
-        self.assertEqual(broken["kind"], "bad_input")  # the input itself threw: not the method's bug
+        self.assertEqual(broken["kind"], "not_entered")  # the input itself threw: not the method's bug
 
     def test_model_inputs_find_what_edges_miss_and_bad_ones_are_dropped(self):
         source = ("public class Orders {\n"

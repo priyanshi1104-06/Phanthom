@@ -67,7 +67,7 @@ export async function run(): Promise<void> {
   await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(js));
   const jsBugs = await waitFor('JavaScript bugs', () => confirmed(js),
     (d) => hasAll(d.map((x) => x.message), ['average', 'firstWord', 'lastPrice', 'padLabel', 'parsePort', 'collatzSteps', 'factorial']));
-  assert.equal(jsBugs.find((d) => d.message.includes('average([])'))!.range.start.line, 4);
+  assert.equal(jsBugs.find((d) => d.message.includes('average([])'))!.range.start.line, 7);
   const nullHints = vscode.languages.getDiagnostics(js).filter((d) => d.severity === vscode.DiagnosticSeverity.Hint);
   assert.ok(nullHints.some((d) => d.message.startsWith('Fails if text may be null')), 'a null-only hint');
 }

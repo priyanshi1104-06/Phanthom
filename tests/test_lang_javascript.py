@@ -60,7 +60,7 @@ class InputsTest(unittest.TestCase):
     def test_names_and_types_decide_the_values(self):
         values = dict(JS.edge_values(None, "values"))
         self.assertIn("[]", values)
-        self.assertIsNone(values["[]"])  # an empty array is an array: no assumption
+        self.assertEqual(values["[]"], "values is an array (guessed from its name)")  # a guess, not a type
         self.assertEqual(values["null"], "values may be null")
         self.assertTrue(all(assumption for _, assumption in JS.edge_values(None, "thing")))  # unknown kind
         self.assertTrue(all(assumption for _, assumption in JS.edge_values(None, "user")))  # unknown fields
@@ -85,9 +85,9 @@ class SandboxTest(unittest.TestCase):
 
     def test_javascript_samples(self):
         found = bugs(specter.run((SAMPLES / "javascript" / "buggy.js").read_text(), "javascript", use_model=False))
-        expected = {"average": ("TypeError", 5), "firstWord": ("TypeError", 11), "lastPrice": ("TypeError", 16),
-                    "padLabel": ("RangeError", 20), "parsePort": ("TypeError", 25), "collatzSteps": ("Timeout", 28),
-                    "factorial": ("RangeError", 38)}
+        expected = {"average": ("TypeError", 8), "firstWord": ("TypeError", 15), "lastPrice": ("TypeError", 21),
+                    "padLabel": ("RangeError", 26), "parsePort": ("TypeError", 32), "collatzSteps": ("Timeout", 36),
+                    "factorial": ("RangeError", 47)}  # declared by JSDoc types: errors
         for name, (error, line) in expected.items():
             with self.subTest(function=name):
                 self.assertIn((error, line, "error"), found[name])
@@ -110,13 +110,13 @@ class SandboxTest(unittest.TestCase):
     def test_replay(self):
         source = (SAMPLES / "javascript" / "buggy.js").read_text()
         result = specter.replay(source, "javascript", "average", {"exprs": ["[]"]})
-        self.assertEqual((result["ok"], result["error"], result["line"]), (False, "TypeError", 5))
+        self.assertEqual((result["ok"], result["error"], result["line"]), (False, "TypeError", 8))
         fixed = specter.replay(source, "javascript", "average", {"exprs": ["[2, 4]"]})
         self.assertEqual(fixed, {"ok": True, "result": "3"})
 
     def test_model_inputs_are_run_and_injections_dropped(self):
         source = ("function parseAge(text) {\n  const n = parseInt(text, 10);\n"
-                  "  if (n > 150) throw new RangeError('age out of range');\n  return n;\n}\n")
+                  "  if (n > 150) return n.toFixed(-1);\n  return n;\n}\n")  # not a deliberate throw
         answer = {"risk": "low", "risk_reason": "", "hypotheses": [
             {"kind": "crash", "line": 3, "bug": "throws above 150", "trigger_condition": "", "confidence": 0.8,
              "inputs": [['"200"'], ["process.exit(1)"], ['(() => { throw new RangeError("age out of range") })()']]}]}

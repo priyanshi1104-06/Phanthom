@@ -12,6 +12,9 @@ Call job - run the function once with given arguments (used to replay a repro):
 
 Calls job - several inputs in one worker: {"mode": "calls", ..., "calls": [[1, 0], [[]]]}
  -> {"results": [<a call result for each input>]}
+The file is loaded once; each call then runs in its own forked process, so calls can't leak state
+into each other and one call stuck inside C code (which no signal can interrupt) is killed alone.
+kind "exit": the code ended the program on purpose (sys.exit, os._exit): never a finding.
 
 Fuzz job - generate inputs from the type hints with Hypothesis until one fails:
     {"mode": "fuzz", "source": "...", "func_name": "div", "max_examples": 200}
@@ -31,8 +34,12 @@ import io
 import json
 import linecache
 import math
+import os
+import re
+import select
 import signal
 import sys
+import time
 import traceback
 import types
 import typing
@@ -40,6 +47,9 @@ import typing
 SNIPPET = "<snippet>"  # file name the analysed code gets in tracebacks
 MEMORY_LIMIT = 1024 * 1024 * 1024  # bytes of address space the worker may use
 CPU_LIMIT = 120  # CPU seconds before the OS kills the worker
+LOAD_TIMEOUT = 5.0  # seconds the file's own top-level code may take to load (calls job)
+GRACE = 2.0  # seconds past the call's time limit before a forked call is killed
+REJECTION = re.compile(r"^\s*(raise|assert)\b")  # a line that fails on purpose: the code rejects the input
 
 
 class Timeout(BaseException):
@@ -100,6 +110,8 @@ def describe_failure(exc, func, timeout):
     """Turn an exception from call_once into the failure dict every later layer builds on."""
     if isinstance(exc, Timeout):
         kind, message = "timeout", f"no result after {timeout:g} s (possible infinite loop)"
+    elif isinstance(exc, SystemExit):  # sys.exit(): the code ends the program on purpose, not a failure
+        kind, message = "exit", f"the code called sys.exit({safe_str(exc.code, repr) if exc.code is not None else ''})"
     elif isinstance(exc, ReturnTypeError):
         kind, message = "return_type", safe_str(exc)
     else:
@@ -154,11 +166,18 @@ def matches_type(value, hint):
     if isinstance(origin, type):
         return isinstance(value, origin)  # list[int] -> is it a list (elements not checked)
     if isinstance(hint, type):
+        if typing.is_typeddict(hint):  # a TypedDict is a plain dict at runtime
+            return isinstance(value, dict)
+        if getattr(hint, "_is_protocol", False) and not getattr(hint, "_is_runtime_protocol", False):
+            return True  # a static-only Protocol: isinstance() can't check it
         if hint is float:
             return isinstance(value, (int, float))  # an int is fine where a float is expected
         if hint is complex:
             return isinstance(value, (int, float, complex))
-        return isinstance(value, hint)
+        try:
+            return isinstance(value, hint)
+        except TypeError:  # a class that refuses instance checks: don't guess
+            return True
     return True
 
 
@@ -182,19 +201,87 @@ def run_call(job):
 
 
 def run_calls(job):
-    """Several inputs in one worker (each with its own time limit). State can leak between calls,
-    which is why every failure is replayed alone in a fresh worker before it counts."""
-    func = load_function(job["source"], job["func_name"])
+    """Several inputs in one worker. The file is loaded once (its top-level code under a time limit);
+    each call runs in a forked child, so state can't leak from one call into the next and a call
+    stuck where no signal reaches it (inside a C function) is killed without losing the others."""
     timeout = job.get("call_timeout", 1.0)
-    results = []
-    for args in job["calls"]:
+    try:
+        with time_limit(LOAD_TIMEOUT):
+            func = load_function(job["source"], job["func_name"])
+    except Timeout:
+        return {"ok": False, "kind": "error", "error": "Timeout",
+                "message": f"loading the file took more than {LOAD_TIMEOUT:g} s"}
+    except SystemExit as exc:
+        return {"ok": False, "kind": "error", "error": "SystemExit",
+                "message": f"the file called sys.exit({safe_str(exc.code, repr)}) while loading"}
+    return {"results": [call_isolated(func, args, timeout) for args in job["calls"]]}
+
+
+def call_result(func, args, timeout):
+    """One call as a result dict (in this process)."""
+    try:
+        value = call_once(func, decode(args), timeout)
+    except (Exception, Timeout, SystemExit) as exc:
+        return {"ok": False, **describe_failure(exc, func, timeout)}
+    return {"ok": True, "result": short_repr(value, 300)}
+
+
+def call_isolated(func, args, timeout):
+    """call_result in a forked child that is killed if it doesn't answer in time."""
+    if not hasattr(os, "fork"):
+        return call_result(func, args, timeout)
+    read_end, write_end = os.pipe()
+    pid = os.fork()
+    if pid == 0:  # the child: run the call, send the result, and leave without running any cleanup
+        os.close(read_end)
         try:
-            value = call_once(func, decode(args), timeout)
-        except (Exception, Timeout, SystemExit) as exc:
-            results.append({"ok": False, **describe_failure(exc, func, timeout)})
-            continue
-        results.append({"ok": True, "result": short_repr(value, 300)})
-    return {"results": results}
+            data = json.dumps(call_result(func, args, timeout)).encode()
+        except BaseException as exc:  # noqa: BLE001 - the child must always answer
+            data = json.dumps({"ok": False, "kind": "crash", "error": type(exc).__name__,
+                               "message": safe_str(exc)}).encode()
+        try:
+            while data:
+                data = data[os.write(write_end, data):]
+        finally:
+            os._exit(0)
+    os.close(write_end)
+    chunks, finished = [], False
+    deadline = time.monotonic() + timeout + GRACE
+    try:
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0 or not select.select([read_end], [], [], left)[0]:
+                break
+            chunk = os.read(read_end, 1 << 16)
+            if not chunk:
+                finished = True
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(read_end)
+    if not finished:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    _, status = os.waitpid(pid, 0)
+    if finished and chunks:
+        try:
+            return json.loads(b"".join(chunks))
+        except ValueError:
+            pass
+    line = getattr(getattr(func, "__code__", None), "co_firstlineno", None)
+    if not finished:
+        return {"ok": False, "kind": "timeout", "error": "Timeout", "line": line,
+                "message": f"no result after {timeout:g} s (stuck in code that can't be interrupted)",
+                "traceback": ""}
+    if os.WIFSIGNALED(status):
+        name = signal.Signals(os.WTERMSIG(status)).name if os.WTERMSIG(status) in signal.valid_signals() else "signal"
+        return {"ok": False, "kind": "crash", "error": name, "line": line,
+                "message": f"the process was killed by {name}", "traceback": ""}
+    code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else None
+    return {"ok": False, "kind": "exit", "error": "Exit", "line": line,  # os._exit(): ended on purpose
+            "message": f"the code ended the process with exit code {code}"}
 
 
 def run_fuzz(job):
@@ -207,6 +294,7 @@ def run_fuzz(job):
 
     func = load_function(job["source"], job["func_name"])
     timeout = job.get("call_timeout", 1.0)
+    lines = job["source"].splitlines()
     strategies = input_strategies(func, st)
     if isinstance(strategies, str):
         return {"status": "skipped", "reason": strategies}
@@ -221,10 +309,14 @@ def run_fuzz(job):
         snapshot = {"args": encode_or_none(list(args)), "call": call_text(job["func_name"], args)}
         try:
             call_once(func, args, timeout)
-        except (Timeout, SystemExit) as exc:
+        except Timeout as exc:
             failures.append((snapshot, exc))
             raise StopFuzzing() from None  # stop now: shrinking a timeout costs a timeout per step
+        except SystemExit:
+            return  # the code ends the program on purpose: not a failure, keep searching
         except Exception as exc:
+            if on_purpose(exc, lines):
+                return  # raised by a raise/assert line: the function rejects this input as designed
             failures.append((snapshot, exc))
             raise
 
@@ -254,6 +346,15 @@ def run_fuzz(job):
     snapshot, exc = failures[-1]
     return {"status": "bug", "examples": examples, "input": snapshot,
             "failure": describe_failure(exc, func, timeout)}
+
+
+def on_purpose(exc, lines):
+    """True when the innermost line of the analysed code in exc's traceback is a raise or assert."""
+    frames = [frame for frame in traceback.extract_tb(exc.__traceback__) if frame.filename == SNIPPET]
+    if not frames or isinstance(exc, ReturnTypeError):
+        return False
+    number = frames[-1].lineno
+    return bool(number) and 0 < number <= len(lines) and REJECTION.match(lines[number - 1]) is not None
 
 
 def input_strategies(func, st):
