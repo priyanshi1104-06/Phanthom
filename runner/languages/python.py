@@ -99,6 +99,8 @@ class Python(Language):
             return False
         if isinstance(tree.body, ast.Tuple) and not expr.strip().startswith("("):
             return False  # "1, 2" would be two arguments, not one tuple
+        if has_comment(expr):
+            return False  # "1 #": a comment is not part of a literal
         for node in ast.walk(tree):
             if isinstance(node, ast.UnaryOp):
                 if not isinstance(node.op, (ast.USub, ast.UAdd)) or not isinstance(node.operand, ast.Constant) \
@@ -106,7 +108,7 @@ class Python(Language):
                     return False  # only a sign in front of a number
             elif not isinstance(node, ALLOWED) or isinstance(node, ast.Constant) and node.value is Ellipsis:
                 return False
-        return argument(expr) is not None  # it must also be a value the worker can receive
+        return argument(expr) is not UNUSABLE  # it must also be a value the worker can receive
 
     def edge_values(self, type_text, param_name):
         if type_text and type_text.startswith(DEFAULT):  # untyped, but its default says what it takes
@@ -188,7 +190,7 @@ class Python(Language):
         results, calls = [None] * len(inputs), []
         for n, inp in enumerate(inputs):  # each expression on its own: "1 #" can't swallow its neighbours
             args = [argument(a) for a in inp.args]
-            if any(a is None for a in args):
+            if any(a is UNUSABLE for a in args):
                 results[n] = {"ok": False, "kind": "input_error", "error": "InputError",
                               "message": f"not a value the worker can receive: {', '.join(inp.args)}"[:200]}
             else:
@@ -226,14 +228,28 @@ def literal_default(node):
         return None
 
 
+def has_comment(expr):
+    """True when expr holds a # comment (a '#' inside a string literal doesn't count)."""
+    import io
+    import tokenize
+
+    try:
+        return any(token.type == tokenize.COMMENT for token in tokenize.generate_tokens(io.StringIO(expr).readline))
+    except (tokenize.TokenError, SyntaxError):
+        return True
+
+
+UNUSABLE = object()  # what argument() returns for a literal the worker can't receive (None itself is a fine input)
+
+
 def argument(expr):
-    """A literal as the worker's tagged JSON, or None when it isn't a value the worker can receive."""
+    """A literal as the worker's tagged JSON, or UNUSABLE when it isn't a value the worker can receive."""
     import worker  # its JSON helpers only: no analysed code runs in this process
 
     try:
         return worker.encode(ast.literal_eval(expr))
     except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
-        return None
+        return UNUSABLE
 
 
 def fits(value, type_text):

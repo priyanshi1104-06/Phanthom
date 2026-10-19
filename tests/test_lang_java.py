@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 
 from runner import languages, llm, specter
+from runner.languages.base import Input
+from runner.languages.java import bad_cases
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples" / "java"
 JAVA = languages.get("java")
@@ -72,6 +74,33 @@ record Point(int x) { static Point origin() { return new Point(0); } }
         files = JAVA.program(context, JAVA.functions(self.SOURCE)[0], [])["files"]
         self.assertEqual(sorted(files), ["PhantomHarness.java", "Stats.java"])
 
+    def test_java_25_syntax_is_not_half_typed(self):
+        source = ("import module java.base;\npublic class A {\n    final int v;\n    A(int v) {\n"
+                  "        if (v < 0) throw new IllegalArgumentException();\n        super();\n        this.v = v;\n"
+                  "    }\n    public static int f(int a) {\n        return 10 / a;\n    }\n}\n")
+        self.assertFalse(JAVA.has_errors(source))
+        self.assertEqual([f.name for f in JAVA.functions(source)], ["A.A", "A.f"])
+        self.assertTrue(JAVA.has_errors("class A { static int f( { }"))  # still half-typed
+
+    def test_annotation_only_imports_from_outside_the_jdk_are_blanked(self):
+        source = ("import org.jspecify.annotations.Nullable;\nimport com.acme.Money;\n\npublic class Names {\n"
+                  "    public static int length(@Nullable String s, Money m) {\n        return 0;\n    }\n}\n")
+        context = JAVA.context(source, None)
+        self.assertEqual(context.count("\n"), source.count("\n"))
+        self.assertNotIn("jspecify", context)
+        self.assertNotIn("@Nullable", context)
+        self.assertIn("import com.acme.Money;", context)  # used as a type: a real dependency, kept
+
+    def test_jdk_names_the_file_redefines_are_written_in_full_in_the_harness(self):
+        source = ("public class Map {\n    public static int tiles(java.util.Map<String, Integer> counts) {\n"
+                  "        return 0;\n    }\n}\n")
+        fn = JAVA.functions(source)[0]
+        self.assertEqual(fn.shadowed, frozenset({"Map"}))
+        self.assertEqual(JAVA._qualified('new HashMap<>(Map.of("a", List.of(1)))'),
+                         'new java.util.HashMap<>(java.util.Map.of("a", java.util.List.of(1)))')
+        harness = JAVA.program(source, fn, JAVA.edge_inputs(fn))["files"]["PhantomHarness.java"]
+        self.assertIn("new java.util.HashMap<>(java.util.Map.of(", harness)
+
     def test_trace_line_skips_the_harness_and_the_jdk(self):
         trace = ("java.lang.NumberFormatException: For input string: \"\"\n"
                  "\tat java.base/java.lang.Integer.parseInt(Integer.java:672)\n"
@@ -101,6 +130,18 @@ class LiteralTest(unittest.TestCase):
                      "Integer.MAX_VALUE + 1", "new Object()", 'Integer.parseInt("1")', "new int[]{f()}", "{1, 2}",
                      "new ArrayList<>(new ArrayList<>())", "List.<Integer>of()", "java.util.List.of(1)", "this",
                      "true ? 1 : 2", "Math.PI", "new ArrayList<@A Integer>()", "1\n"):
+            self.assertFalse(JAVA.literal_ok(expr), expr)
+
+    def test_nesting_that_keeps_javac_busy_is_rejected(self):
+        self.assertFalse(JAVA.literal_ok("Map.of(" * 20 + ")" * 20))  # javac: hours of overload resolution
+        self.assertTrue(JAVA.literal_ok("List.of(" * 6 + ")" * 6))
+        self.assertFalse(JAVA.literal_ok("List.of(" * 7 + ")" * 7))
+        self.assertFalse(JAVA.literal_ok('Map.of("a")'))  # an odd number of arguments never compiles
+        self.assertFalse(JAVA.literal_ok("Map.of(" + ", ".join(["1"] * 22) + ")"))  # more than 10 pairs
+
+    def test_what_only_javac_would_stop_is_rejected(self):
+        for expr in ("List.of.foo(1)", "Arrays.asList.toString()", "Map.of.of()", "'a\"+System.exit(1)+\"b'",
+                     "'ab'", '""""""', '"\\x41"', '"\\q"', "2147483648", "1e400"):
             self.assertFalse(JAVA.literal_ok(expr), expr)
 
 
@@ -137,6 +178,63 @@ class InputsTest(unittest.TestCase):
         self.assertNotIn(("new int[]{0}", "3"), pairs)  # never a count past the end
         mixed = {tuple(i.args): i.assumptions for i in JAVA.edge_inputs(dot)}
         self.assertEqual(mixed[("new int[]{}", "new int[]{1, 2, 3}")], ["a and b may have different lengths"])
+
+    def test_inner_collections_are_mutable_too(self):
+        rows = JAVA.edge_values("List<List<Integer>>", "rows")
+        inner = "new ArrayList<>(List.of(1, 2, 3))"
+        self.assertEqual(rows[0], (f"new ArrayList<>(List.of({inner}, {inner}, {inner}))", None))
+        self.assertEqual(rows[2], ("new ArrayList<>(List.of(new ArrayList<>()))", None))
+        scores = JAVA.edge_values("Map<String, List<Integer>>", "scores")[0][0]
+        self.assertEqual(scores, 'new HashMap<>(Map.of("abc", new ArrayList<>(List.of(1, 2, 3)), '
+                                 '"de", new ArrayList<>(List.of(1, 2, 3))))')
+        source = ("class L {\n  static void f(List<List<Integer>> rows) {}\n"
+                  "  static void g(Map<String, List<Integer>> m) {}\n}\n")
+        f, g = JAVA.functions(source)
+        self.assertEqual(JAVA.model_input(f, ["List.of(List.of(1))"], None).args,
+                         ["new ArrayList<>(List.of(new ArrayList<>(List.of(1))))"])
+        self.assertEqual(JAVA.model_input(g, ['Map.of("a", List.of(1))'], None).args,
+                         ['new HashMap<>(Map.of("a", new ArrayList<>(List.of(1))))'])
+
+    def test_a_start_and_a_count_on_the_same_value_stay_inside_it(self):
+        source = ("public class Ranges {\n"
+                  "    public static int sumRange(int[] values, int start, int count) { return 0; }\n"
+                  "    public static String chunk(String text, int offset, int length) { return \"\"; }\n}\n")
+        for fn in JAVA.functions(source):
+            for inp in JAVA.edge_inputs(fn):
+                value, begin, count = inp.args
+                if value == "null":
+                    continue
+                size = len(value) - 2 if value.startswith('"') else 0 if value.endswith("{}") else value.count(",") + 1
+                if int(begin) < 0 or int(begin) + int(count) > size:
+                    self.assertTrue(inp.assumptions, (fn.name, inp.args))  # outside it: only as an assumption
+        chunk = {tuple(i.args): i.assumptions for i in JAVA.edge_inputs(JAVA.functions(source)[1])}
+        self.assertEqual(chunk[('" "', "0", "1")], [])  # the length follows the text
+        self.assertNotIn(('" "', "0", "3"), chunk)
+
+    def test_only_values_at_the_limits_of_the_parameter_type_are_extreme(self):
+        source = "class C {\n  static int h(long epochMillis) { return 0; }\n  static int f(int x) { return 0; }\n}\n"
+        h, f = JAVA.functions(source)
+        for fn, arg, assumptions in ((h, "1700000000000L", []), (h, "Integer.MAX_VALUE", []),
+                                     (h, "Long.MAX_VALUE", ["epochMillis may be as large as Long.MAX_VALUE"]),
+                                     (f, "0xFFFFFFFF", []), (f, "0x7FFFFFFF", ["x may be as large as 0x7FFFFFFF"])):
+            self.assertEqual(JAVA.model_input(fn, [arg], None).assumptions, assumptions, arg)
+
+    def test_only_the_inputs_javac_rejects_are_dropped(self):
+        source = "class S {\n  static int f(String s) { return 0; }\n}\n"
+        fn = JAVA.functions(source)[0]
+        inputs = [Input(['"a"']), Input(["1"]), Input(['"b"'])]
+        harness = JAVA.program(source, fn, inputs)["files"]["PhantomHarness.java"]
+        line = next(n for n, text in enumerate(harness.splitlines(), 1) if "String a0 = 1;" in text)
+        message = f"PhantomHarness.java:{line}: error: incompatible types: int cannot be converted to String\n"
+        self.assertEqual(bad_cases(harness, message), {1})
+        self.assertIsNone(bad_cases(harness, "S.java:2: error: cannot find symbol\n"))  # the user's file
+
+    def test_a_run_stopped_before_the_build_finished_is_not_a_crash(self):
+        results = JAVA.parse_output("", 2)  # no @@BUILD line: javac was still busy
+        self.assertEqual([r["kind"] for r in results], ["build_error", "build_error"])
+        lost = JAVA.parse_output("@@BUILD 0\n", 1)  # built, but no result for the input
+        self.assertEqual(lost[0]["kind"], "sandbox_error")
+        self.assertNotIn("sandbox_error", specter.FAILURES)
 
     def test_model_inputs(self):
         source = ("class S {\n  static int f(List<Integer> xs, int n) { return 0; }\n"
@@ -209,7 +307,8 @@ class SandboxTest(unittest.TestCase):
             {"kind": "crash", "line": 6, "bug": "overflow", "trigger_condition": "", "confidence": 0.8,
              "inputs": inputs}]}
         provider = llm.ScriptedProvider([
-            {"match": "Function: Orders.quantity", "answer": hypotheses([['"99999999999"'], ["System.exit(1)"]])},
+            {"match": "Function: Orders.quantity",  # 1 is no String: only that input is dropped
+             "answer": hypotheses([['"99999999999"'], ["System.exit(1)"], ["1"]])},
             {"match": "Function: Orders.perBox", "answer": hypotheses([['"ten"', "1"]])},  # doesn't type-check
         ])
         llm.set_provider(provider)
@@ -222,6 +321,97 @@ class SandboxTest(unittest.TestCase):
         per_box = [(f["origin"], f["failure"]["error"]) for f in found if f["function"] == "Orders.perBox"]
         self.assertIn(("edge", "ArithmeticException"), per_box)  # the broken model input didn't hide it
         self.assertIn("<code-", provider.calls[0]["prompt"])
+
+    def test_correct_code_that_guards_or_changes_its_arguments_has_no_errors(self):
+        source = """import java.util.*;
+public class Lib {
+    public static int percent(int part, int whole) {
+        if (whole == 0) {
+            throw new IllegalArgumentException("whole must not be zero");
+        }
+        return part * 100 / whole;
+    }
+    public static int share(int total, int parts) {
+        if (parts <= 0) throw new ArithmeticException("parts must be positive");
+        return total / parts;
+    }
+    public static int length(String s) {
+        Objects.requireNonNull(s, "s");
+        return s.length();
+    }
+    public static void sortRows(List<List<Integer>> rows) {
+        for (List<Integer> row : rows) {
+            Collections.sort(row);
+        }
+    }
+    public static int addScore(Map<String, List<Integer>> scores, String name, int score) {
+        List<Integer> list = scores.computeIfAbsent(name, k -> new ArrayList<>());
+        list.add(score);
+        return list.size();
+    }
+    public static int sumRange(int[] values, int start, int count) {
+        int total = 0;
+        for (int k = start; k < start + count; k++) {
+            total += values[k];
+        }
+        return total;
+    }
+    public static String chunk(String text, int offset, int length) {
+        return text.substring(offset, offset + length);
+    }
+    public static int perHead(int total, int people) {
+        return total / people;
+    }
+}
+"""
+        answer = specter.run(source, "java", use_model=False)
+        errors = {(f["function"], f["failure"]["error"]) for f in answer["findings"]
+                  if f["status"] == "bug" and f["severity"] == "error"}
+        self.assertEqual(errors, {("Lib.perHead", "ArithmeticException")})  # the one real bug
+        statuses = {f["function"]: f["status"] for f in answer["findings"]}
+        for name in ("Lib.percent", "Lib.share", "Lib.length"):  # rejecting an input on purpose is no bug
+            self.assertEqual(statuses[name], "no_bug_found", name)
+
+    def test_files_javac_25_compiles_with_imports_it_cannot_resolve_or_jdk_names_still_run(self):
+        sources = {
+            "jspecify": ("import org.jspecify.annotations.Nullable;\n\npublic class Names {\n"
+                         "    public static int length(@Nullable String s) {\n        return s == null ? 0 : s.length();\n"
+                         "    }\n\n    public static int per(int total, int parts) {\n        return total / parts;\n"
+                         "    }\n}\n", {"Names.per": [("ArithmeticException", 9, "error")]}),
+            "java 25": ("import module java.base;\npublic class A {\n    final int v;\n    A(int v) {\n"
+                        "        if (v < 0) throw new IllegalArgumentException();\n        super();\n"
+                        "        this.v = v;\n    }\n    public static int f(int a) {\n"
+                        "        List<Integer> xs = List.of(1);\n        return xs.get(0) * 10 / a;\n    }\n}\n",
+                        {"A.f": [("ArithmeticException", 11, "error")]}),
+            "class Map": ("public class Map {\n    public static int tiles(java.util.Map<String, Integer> counts) {\n"
+                          "        return counts.size() / (counts.size() - 1);\n    }\n}\n",
+                          {"Map.tiles": [("ArithmeticException", 3, "error"), ("NullPointerException", 3, "info")]}),
+        }
+        for label, (source, expected) in sources.items():
+            with self.subTest(label):
+                answer = specter.run(source, "java", use_model=False)
+                self.assertTrue(answer["parsed"])
+                self.assertEqual(bugs(answer), expected)
+                self.assertNotIn("error", [f["status"] for f in answer["findings"]])
+
+    def test_model_inputs_that_would_hang_javac_or_only_look_extreme(self):
+        source = ("public class Flags {\n    public static int share(boolean on) {\n        int parts = on ? 4 : 0;\n"
+                  "        return 100 / parts;\n    }\n\n"
+                  "    private static final String[] NAMES = new String[24];\n\n"
+                  "    public static String hourName(long epochMillis) {\n"
+                  "        int hour = (int) epochMillis / 3_600_000 % 24;\n        return NAMES[hour];\n    }\n}\n")
+        answer = lambda inputs: {"risk": "low", "risk_reason": "", "hypotheses": [  # noqa: E731
+            {"kind": "crash", "line": 1, "bug": "x", "trigger_condition": "x", "confidence": 0.9, "inputs": inputs}]}
+        llm.set_provider(llm.ScriptedProvider([
+            {"match": "Function: Flags.share", "answer": answer([["Map.of(" * 20 + ")" * 20]])},
+            {"match": "Function: Flags.hourName", "answer": answer([["1700000000000L"]])},
+        ]))
+        found = {(f["function"], f["origin"], f["input"]["call"], f["failure"]["error"], f["severity"])
+                 for f in specter.run(source, "java")["findings"] if f["status"] == "bug"}
+        self.assertEqual(found, {
+            ("Flags.share", "edge", "Flags.share(false)", "ArithmeticException", "error"),
+            ("Flags.hourName", "model", "Flags.hourName(1700000000000L)", "ArrayIndexOutOfBoundsException", "error"),
+        })
 
 
 if __name__ == "__main__":
