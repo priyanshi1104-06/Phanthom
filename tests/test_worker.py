@@ -60,6 +60,15 @@ class CallTest(unittest.TestCase):
         result = call("import sys\ndef quit_(x):\n    sys.exit(3)\n", "quit_", [1])
         self.assertEqual((result["kind"], result["error"]), ("exit", "SystemExit"))  # ended on purpose: not a bug
 
+    def test_return_annotations_isinstance_cannot_check_count_as_a_match(self):
+        typed_dict = ("from typing import TypedDict\n\nclass Point(TypedDict):\n    x: int\n\n"
+                      "def make(x: int) -> Point:\n    return {'x': x}\n")
+        self.assertEqual(call(typed_dict, "make", [1]), {"ok": True, "result": {"x": 1}})
+        self.assertEqual(call(typed_dict.replace("{'x': x}", "[x]"), "make", [1])["kind"], "return_type")
+        protocol = ("from typing import Protocol\n\nclass Named(Protocol):\n    name: str\n\n"
+                    "class User:\n    name = 'a'\n\ndef make() -> Named:\n    return User()\n")
+        self.assertTrue(call(protocol, "make", [])["ok"])
+
     def test_syntax_error_is_reported(self):
         result = call("def broken(:\n    pass\n", "broken", [])
         self.assertEqual((result["kind"], result["error"]), ("error", "SyntaxError"))
@@ -90,6 +99,24 @@ class CallTest(unittest.TestCase):
         source = "def kinds(t, s, b, f):\n    return [type(t).__name__, type(s).__name__, b, f != f]\n"
         args = [{"$tuple": [1, 2]}, {"$set": [3]}, {"$bytes": "aGk="}, {"$float": "nan"}]
         self.assertEqual(call(source, "kinds", args)["result"], ["tuple", "set", {"$bytes": "aGk="}, True])
+
+
+class CallsTest(unittest.TestCase):
+    def test_each_input_runs_alone_and_one_stuck_in_c_code_is_killed_alone(self):
+        source = ("import sys\ncount = []\n\ndef ratio(n):\n    count.append(n)\n    if n == -1:\n"
+                  "        return sum(range(10 ** 12))\n    if n == 9:\n        sys.exit(2)\n    return (10 // n, len(count))\n")
+        job = {"mode": "calls", "source": source, "func_name": "ratio", "calls": [[-1], [0], [5], [9], [2]],
+               "call_timeout": 0.5}
+        results = run_job(job, timeout=30)["results"]
+        self.assertEqual([r.get("kind") for r in results], ["timeout", "exception", None, "exit", None])
+        self.assertEqual(results[1]["error"], "ZeroDivisionError")
+        self.assertEqual((results[2]["result"], results[4]["result"]), ("(2, 1)", "(5, 1)"))  # no state leaks
+
+    def test_a_file_that_does_not_load_fails_the_whole_job(self):
+        job = {"mode": "calls", "source": "import no_such_module\ndef f(x):\n    return x\n", "func_name": "f",
+               "calls": [[1]]}
+        result = run_job(job, timeout=30)
+        self.assertEqual((result["kind"], result["error"]), ("error", "ModuleNotFoundError"))
 
 
 class FuzzTest(unittest.TestCase):

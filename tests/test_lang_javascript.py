@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from runner import languages, llm, specter
+from runner.languages.base import Input
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 JS = languages.get("javascript")
@@ -191,6 +192,77 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual([(f["origin"], f["input"]["call"]) for f in found], [("model", 'parseAge("200")')])
         self.assertEqual(found[0]["failure"]["line"], 3)
         self.assertIn("<code-", provider.calls[0]["prompt"])  # the code is fenced as data
+
+    def test_correct_files_have_no_errors(self):
+        clamp = "export function clamp(x: number, lo: number, hi: number): number {\n  return Math.min(Math.max(x, lo), hi);\n}\n"
+        cases = {  # label: (language, source)
+            "enum": ("typescript", "export enum Color {\n  Red,\n  Green,\n}\n\n" + clamp),
+            "parameter properties": ("typescript", "export class Point {\n  constructor(public x: number) {}\n}\n\n" + clamp),
+            "namespace": ("typescript", "export namespace Geo {\n  export const R = 6371;\n}\n\n" + clamp),
+            "sibling import": ("typescript", 'import { round2 } from "./money";\n\n' + clamp),
+            "npm require": ("javascript", 'const { round2 } = require("./money");\n\n'
+                                          "function clamp(x, lo = 0, hi = 10) {\n  return Math.min(Math.max(x, lo), hi);\n}\n"),
+            "script code": ("javascript", 'const fs = require("fs");\n\nfunction wordCount(text) {\n'
+                                          "  return text.split(/\\s+/).filter(Boolean).length;\n}\n\n"
+                                          'const input = fs.readFileSync("input.txt", "utf8");\n'
+                                          "console.log(wordCount(input));\n"),
+            "lookup table": ("typescript", "const SQUARES: number[] = [];\nfor (let i = 0; i < 10; i++) SQUARES.push(i * i);\n\n"
+                                           "export function squareLabel(digit: number): string {\n"
+                                           "  if (!Number.isInteger(digit) || digit < 0 || digit > 9) {\n"
+                                           '    return "?";\n  }\n  return SQUARES[digit].toString();\n}\n'),
+            "record": ("typescript", "interface User {\n  name: string;\n}\n\n"
+                                     "export function userNames(users: Record<string, User>): string[] {\n"
+                                     "  return Object.values(users).map((user) => user.name.toUpperCase());\n}\n"),
+            "globals shadowed": ("javascript", "function process(items = []) {\n  return items.filter(Boolean).length;\n}\n\n"
+                                               "function JSON(text = \"\") {\n  return text.length;\n}\n\n"
+                                               "function clamp(x, lo = 0, hi = 10) {\n  return Math.min(Math.max(x, lo), hi);\n}\n"),
+            "throw guard": ("typescript", "export function repeatWord(word: string, count: number): string {\n"
+                                          "  if (!Number.isInteger(count) || count < 0) {\n"
+                                          '    throw new RangeError("count must be a non-negative integer");\n  }\n'
+                                          "  return word.repeat(count);\n}\n"),
+            "exit": ("javascript", "function requireArgs(args = []) {\n  if (args.length === 0) {\n"
+                                   '    console.error("usage: tool FILE");\n    process.exit(2);\n  }\n  return args.length;\n}\n'),
+            "never": ("typescript", "export function fail(message: string): never {\n  throw new Error(message);\n}\n"),
+            "main": ("javascript", 'const fs = require("fs");\n\nfunction main() {\n'
+                                   '  const text = fs.readFileSync(process.argv[2], "utf8");\n  console.log(text.length);\n}\n\nmain();\n'),
+            "unprintable result": ("javascript", 'function newCounter(name = "hits") {\n  const counter = Object.create(null);\n'
+                                                 "  counter[name] = 0n;\n  return counter;\n}\n"),
+        }
+        for label, (language, source) in cases.items():
+            with self.subTest(label):
+                answer = specter.run(source, language, use_model=False)
+                self.assertEqual([(f["function"], f["status"]) for f in answer["findings"] if f["status"] == "error"], [])
+                self.assertEqual({f["severity"] for f in answer["findings"] if f["status"] == "bug"} - {"info"}, set(),
+                                 answer["findings"])
+
+    def test_strict_mode_and_guessed_kinds(self):
+        strict = '"use strict";\n\nfunction countItems(items) {\n  total = items.length;\n  return total;\n}\n'
+        found = bugs(specter.run(strict, "javascript", use_model=False))
+        self.assertIn(("ReferenceError", 4, "warning"), found["countItems"])  # the kind of items is a guess
+        guessed = 'function initialsOf(name) {\n  return (name.first[0] + name.last[0]).toUpperCase();\n}\n'
+        answer = specter.run(guessed, "javascript", use_model=False)
+        self.assertEqual({(f["severity"], tuple(f["assumptions"])) for f in answer["findings"] if f["status"] == "bug"},
+                         {("warning", ("name is a string (guessed from its name)",))})
+
+    def test_an_argument_that_fails_while_it_is_built_is_never_the_function_s_bug(self):
+        source = "function double(n) {\n  return n * 2;\n}\n"
+        for lang in (JS, TS):
+            fn = lang.functions(source)[0]
+            inputs = [Input(["+1n"]), Input(["+{__proto__: null}"]), Input(["`\\1`"]), Input(["3"])]  # past literal_ok
+            results = lang.run_inputs(source, fn, inputs, lang.sandbox())
+            self.assertEqual([r.get("kind") for r in results], ["not_entered"] * 3 + [None], lang.name)
+            self.assertEqual(results[3], {"ok": True, "result": "6"})
+
+    def test_a_model_input_node_cannot_compile_hides_nothing(self):
+        average = "export function average(values: number[]): number {\n  return values.reduce((s, v) => s + v) / values.length;\n}\n"
+        yes_no = 'export function yesNo(flag: boolean): string {\n  return flag ? "yes" : "no";\n}\n'
+        answer = {"risk": "low", "risk_reason": "", "hypotheses": [
+            {"kind": "crash", "line": 1, "bug": "x", "trigger_condition": "x", "confidence": 0.9,
+             "inputs": [["`\\1`"], ["+1n"], ["[]"]]}]}
+        llm.set_provider(llm.ScriptedProvider([{"match": "Function: average", "answer": answer},
+                                               {"match": "Function: yesNo", "answer": answer}]))
+        self.assertEqual(bugs(specter.run(average, "typescript")), {"average": [("TypeError", 2, "error")]})
+        self.assertEqual(bugs(specter.run(yes_no, "typescript")), {})  # [] is no boolean: dropped
 
 
 if __name__ == "__main__":
