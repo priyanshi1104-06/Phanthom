@@ -73,6 +73,13 @@ class ParsingTest(unittest.TestCase):
         self.assertIn("overloaded", overloads[1].skip)
 
 
+    def test_a_function_named_main_is_never_run(self):
+        self.assertEqual([f.name for f in C.functions("int main(void) { return 0; }\nint f(void) { return 1; }\n")],
+                         ["f"])
+        found = {f.name: f for f in CPP.functions("namespace app {\nint main(int x) { return x; }\n}\n")}
+        self.assertIn("main", found["app::main"].skip)  # #define main renames it too: it can't be called
+
+
 class LiteralTest(unittest.TestCase):
     def test_c_plain_literals_pass(self):
         for expr in ("1", "-1", "+2", "- 1", "0x1F", "1.5", "-1.5e3f", "10u", '"abc"', r'"a\n\"b"', '"a" "b"', "'a'",
@@ -85,12 +92,33 @@ class LiteralTest(unittest.TestCase):
     def test_c_anything_that_runs_code_or_fakes_memory_is_rejected(self):
         for expr in ("x", "f()", "1 + 1", "(int)3", "(char *)1", "sizeof(int)", "1, 2", "{1, 2}", 'system("id")',
                      '1); system("id"); (1', '1); } int evil(void) { return system("id"); } void h(void) { (1',
-                     '"a" /* c */', '"a" // c', '"abc??/"', "1'000", "-x", "!0", "~0", "(int[]){x}", "(int[]){[0] = 1}",
+                     '"a" /* c */', '"a" // c', "1'000", "-x", "!0", "~0", "(int[]){x}", "(int[]){[0] = 1}",
                      "(int[1000000000]){1}", "(char *){0}", "(const char *[]){0}", "(const char *[]){NULL}",
                      "(struct p){1}", "(int[][2]){{1, 2}}", "({ abort(); 1; })", "a = 1", "__LINE__", "main",
                      '"a" PRId64', "1\n", "(int[]){(int)1}", "&x", "*p", "INT_MAX + 1", "(int[]){f()}",
                      "__builtin_trap()", '_Pragma("message(1)")', "(float[2][2]){0}", "12_km"):
             self.assertFalse(C.literal_ok(expr), expr)
+
+    def test_finding_literal_ok_over_rejects_double_question_marks(self):
+        # trigraphs are off under -std=gnu17 / gnu++20, so "??" is two plain characters (checked by GCC in
+        # test_question_marks_and_prefixes_compile_as_plain_text)
+        for lang in (C, CPP):
+            for expr in ('"what??"', '"a??b"', '"??/"', '"x??="', "'?'"):
+                self.assertTrue(lang.literal_ok(expr), expr)
+        self.assertIn("gnu17", C.compiler)
+        self.assertIn("gnu++20", CPP.compiler)
+        self.assertNotIn("trigraphs", C.compiler + CPP.compiler)
+
+    def test_finding_literal_ok_accepts_non_canonical_literal_forms(self):
+        for lang in (C, CPP):
+            for expr in ("08", "09", "019", 'L"a"', 'u8"a"', 'u"a"', 'U"a"', '"a" L"b"', "L'a'", "u8'a'", "'ab'",
+                         "'é'", "1f", "10uu", "1.5u", "0x"):
+                self.assertFalse(lang.literal_ok(expr), f"{lang.name}: {expr}")
+            for expr in ("0", "0755", "0x1F", "0b101", "10ul", "10LLU", "1.5f", "1.5L", "1e5", "08.5", "1.", ".5",
+                         "'a'", r"'\x41'", r"'\''", r'"\u00e9"'):
+                self.assertTrue(lang.literal_ok(expr), f"{lang.name}: {expr}")
+        fn = C.functions("int sum(const int *values, int count) { return 0; }")[0]
+        self.assertEqual(C.model_input(fn, ["(int[]){1, 2}", "02"], None).assumptions, [])  # octal 02 is 2
 
     def test_cpp_literals(self):
         for expr in ("nullptr", "std::vector<int>{1, 2}", 'std::vector<std::string>{"a"}', 'std::string("abc")',
@@ -195,10 +223,82 @@ class CrashReportTest(unittest.TestCase):
         source = "#include <stdlib.h>\nint check(int n) {\n    if (n < 0) exit(2);\n    return n;\n}\n"
         fn = C.functions(source)[0]
         harness = C.program(source, fn, [Input(["-1"])])["files"]["phantom_rt.c"]
-        self.assertIn("no_verdict", harness)  # an atexit handler reports exit(2) as a deliberate stop
-        self.assertNotIn(C.classify(2, '\n@@PHANTOM {"ok": false, "kind": "no_verdict"}\n', "")["kind"],
-                         specter.FAILURES)
+        self.assertIn('\\"kind\\": \\"exit\\"', harness)  # an atexit handler reports exit(2) as a deliberate stop
+        self.assertEqual(C.classify(2, '\n@@PHANTOM {"ok": false, "kind": "exit", "error": "Exit"}\n', "")["kind"],
+                         "exit")
+        self.assertEqual(C.classify(3, "", "")["kind"], "exit")  # _exit(3) skips atexit: no verdict, no report
+        self.assertEqual(C.classify(0, "", "")["kind"], "exit")  # _exit(0)
         self.assertEqual(C.classify(124, "", "")["kind"], "timeout")
+        for err in ("==1==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000010\n",
+                    "user.c:3:5: runtime error: division by zero\n", "prog: user.c:3: f: Assertion `x' failed.\n",
+                    "terminate called after throwing an instance of 'int'\n"):
+            self.assertEqual(CPP.classify(1, "", err)["kind"], "crash", err)  # sanitizers exit with status 1
+
+
+class ConventionTest(unittest.TestCase):
+    """Shared conventions: .entered, failing on purpose, exit, and showing a returned char *."""
+
+    def test_the_harness_marks_entry_after_the_arguments_and_before_the_call(self):
+        self.assertTrue(C.marks_entry and CPP.marks_entry)
+        for lang, source in ((C, "int f(const int *a, int n) { return n; }\n"),
+                             (CPP, "#include <string>\nint f(const std::string &s, int n) { return n; }\n")):
+            fn = lang.functions(source)[0]
+            files = lang.program(source, fn, [Input(["(int[]){1}" if lang is C else '"a"', "1"])])["files"]
+            body = files[f"phantom_main.{lang.ext}"].split("static void phantom_input_0(void) {")[1]
+            self.assertLess(body.index("phantom_a1 = 1;"), body.index("phantom_enter();"))
+            self.assertLess(body.index("phantom_enter();"), body.index("f(phantom_a0, phantom_a1)"))
+            self.assertIn('fopen(".entered", "w")', files[f"phantom_rt.{lang.ext}"])
+
+    def test_failing_on_purpose_is_not_a_bug_but_a_crash_on_that_line_is(self):
+        source = ("#include <assert.h>\n#include <stdlib.h>\n#include <string.h>\n"
+                  "int f(const char *s, int n) {\n"
+                  "    assert(n >= 0);\n"                                 # 5
+                  "    if (n > 9) abort();\n"                             # 6
+                  "    if (n == 7) throw std::invalid_argument(\"seven\");\n"  # 7
+                  "    assert(strlen(s) < 100);\n"                        # 8
+                  "    return n;\n}\n")
+        crash = {"ok": False, "kind": "crash"}
+        on_purpose = [{**crash, "error": "assertion failed", "message": "Assertion `n >= 0' failed.", "line": 5},
+                      {**crash, "error": "abort", "message": "ABRT on unknown address", "line": 6},
+                      {**crash, "error": "SIGABRT", "message": "", "line": 6},
+                      {"ok": False, "kind": "exception", "error": "std::invalid_argument", "line": 7}]
+        bugs_here = [{**crash, "error": "null pointer dereference", "message": "SEGV", "line": 8},  # strlen(NULL)
+                     {**crash, "error": "null pointer dereference", "message": "SEGV", "line": 5},
+                     {**crash, "error": "assertion failed", "message": "Assertion '__n < this->size()' failed",
+                      "line": 8},  # libstdc++'s own check, reached from the line
+                     {**crash, "error": "std::out_of_range", "message": "uncaught", "line": 7},  # noexcept: terminate
+                     {**crash, "error": "abort", "message": "", "line": 9},
+                     {**crash, "error": "abort", "message": "", "line": None}]
+        for failure in on_purpose:
+            self.assertTrue(CPP.deliberate(source, failure), failure)
+        for failure in bugs_here:
+            self.assertFalse(CPP.deliberate(source, failure), failure)
+        self.assertFalse(C.deliberate("int f(int n) {\n    static_assert(1, \"x\"); return 1 / n;\n}\n",
+                                      {**crash, "error": "assertion failed", "message": "Assertion `x' failed.",
+                                       "line": 2}))
+
+    def test_finding_display_time_over_read_of_a_returned_char_pointer(self):
+        # a char * the function returns has no known length: showing it reads only up to the end of its
+        # block, and a pointer the harness can't read at all is not the function's crash
+        self.assertIn("__asan_address_is_poisoned", C.runtime)
+        self.assertIn("phantom_cstr_len(v, 301, &cut)", CPP.harness_head)
+        self.assertNotIn("strnlen(s, 301)", C.runtime)
+        self.assertNotIn("v[n]) n++", CPP.harness_head)
+        wild = ("AddressSanitizer:DEADLYSIGNAL\n==1==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000001"
+                " (pc 0x1 bp 0x2 sp 0x3 T0)\n==1==The signal is caused by a READ memory access.\n"
+                "    #0 0x5 in phantom_cstr_len /tmp/w/phantom_rt.c:30\n"
+                "    #1 0x5 in phantom_string /tmp/w/phantom_rt.c:80\n    #2 0x5 in phantom_input_0 "
+                "/tmp/w/phantom_main.c:40\n    #3 0x5 in main /tmp/w/phantom_main.c:50\n"
+                "SUMMARY: AddressSanitizer: SEGV /tmp/w/phantom_rt.c:30 in phantom_cstr_len\n")
+        for lang in (C, CPP):
+            self.assertNotIn(lang.classify(1, "", wild)["kind"], specter.FAILURES)
+            in_cpp = wild.replace("phantom_cstr_len /tmp", "phantom_cstr_len(char const*, unsigned long, int*) /tmp")
+            self.assertNotIn(lang.classify(1, "", in_cpp)["kind"], specter.FAILURES)
+        # the function's own crash, and a dangling std::string_view shown by its known length, stay crashes
+        own = wild.replace("#0 0x5 in phantom_cstr_len /tmp/w/phantom_rt.c:30", "#0 0x5 in echo /tmp/w/user.c:2")
+        self.assertEqual((C.classify(1, "", own)["kind"], C.classify(1, "", own)["line"]), ("crash", 2))
+        view = wild.replace("phantom_cstr_len", "phantom_quote")
+        self.assertEqual(CPP.classify(1, "", view)["kind"], "crash")
 
 
 class SandboxTest(unittest.TestCase):
@@ -285,6 +385,54 @@ class SandboxTest(unittest.TestCase):
         summary = {(f["function"], f["origin"], f["failure"]["error"], f["failure"]["line"]) for f in found}
         self.assertIn(("level_name", "model", "std::out_of_range", 8), summary)
         self.assertIn(("ratio", "edge", "division by zero", 12), summary)  # the bad model input didn't hide it
+
+    def test_finding_display_time_over_read_of_a_returned_char_pointer_reproduced(self):
+        for lang in ("c", "cpp"):  # the review's repro: echo never reads s, so it can't fail
+            scripted("echo", [["(char[]){'a','b','c'}"]], 1)
+            answer = specter.run("char *echo(char *s) { return s; }\n", lang)
+            self.assertEqual([f["status"] for f in answer["findings"]], ["no_bug_found"], lang)
+        llm.set_provider(None)
+        for lang in ("c", "cpp"):  # (char *)3 can't be shown at all: still not a crash of wild()
+            answer = specter.run("char *wild(int n) {\n    return (char *)(long)n;\n}\n", lang, use_model=False)
+            self.assertEqual([f["status"] for f in answer["findings"]], ["no_bug_found"], lang)
+
+    def test_c_conventions_failing_on_purpose_exit_and_a_returned_buffer_without_nul(self):
+        source = ("#include <assert.h>\n#include <stdlib.h>\n#include <string.h>\n#include <unistd.h>\n\n"
+                  "char *echo(char *s) {\n    return s;\n}\n\n"
+                  "int positive(int n) {\n    assert(n > 0);\n    return n;\n}\n\n"
+                  "int must(int n) {\n    if (n < 0)\n        abort();\n    return n;\n}\n\n"
+                  "int leave(int n) {\n    if (n < 0)\n        exit(2);\n    if (n == 0)\n        _exit(3);\n"
+                  "    return n;\n}\n\n"
+                  "size_t len_of(const char *s) {\n    assert(strlen(s) < 100);\n    return strlen(s);\n}\n")
+        scripted("Function: echo (", [["(char[]){'a', 'b', 'c'}"]], 7)
+        found = bugs(specter.run(source, "c"))
+        self.assertEqual(list(found), ["len_of"])  # assert, abort, exit and _exit are deliberate; echo is fine
+        self.assertEqual([(line, severity) for _, line, severity in found["len_of"]], [(30, "info")])  # strlen(NULL)
+        self.assertEqual(specter.replay(source, "c", "echo", {"exprs": ["(char[]){'a', 'b', 'c'}"]}),
+                         {"ok": True, "result": '"abc" (not NUL-terminated)'})
+
+    def test_question_marks_and_prefixes_compile_as_plain_text(self):
+        source = "#include <string.h>\nsize_t len_of(const char *s) {\n    return strlen(s);\n}\n"
+        for lang in (C, CPP):  # no trigraphs: "??/" is three characters, not an escaped closing quote
+            self.assertEqual(specter.replay(source, lang.name, "len_of", {"exprs": ['"??/"']}),
+                             {"ok": True, "result": "3"})
+
+    def test_cpp_conventions_throw_on_purpose_and_a_failing_static_initializer(self):
+        source = ("#include <stdexcept>\n#include <vector>\n\nchar *echo(char *s) {\n    return s;\n}\n\n"
+                  "int parse_digit(char c) {\n    if (c < '0' || c > '9')\n"
+                  "        throw std::invalid_argument(\"not a digit\");\n    return c - '0';\n}\n\n"
+                  "int fourth(const std::vector<int> &v) {\n    return v.at(3);\n}\n")
+        scripted("Function: echo (", [["(char[]){'a', 'b', 'c'}"]], 5)
+        found = bugs(specter.run(source, "cpp"))
+        self.assertEqual(found, {"fourth": [("std::out_of_range", 15, "error")]})  # thrown by the library
+        self.assertEqual(specter.replay(source, "cpp", "echo", {"exprs": ["(char[]){'a', 'b', 'c'}"]}),
+                         {"ok": True, "result": '"abc" (not NUL-terminated)'})
+        llm.set_provider(None)
+        source = ("#include <string>\nstruct Config {\n    Config() { std::string s; (void)s.at(3); }\n};\n"
+                  "static Config config;\n\nint id(int x) {\n    return x;\n}\n")
+        answer = specter.run(source, "cpp", use_model=False)
+        self.assertEqual([(f["status"], f["failure"]["kind"]) for f in answer["findings"] if f["function"] == "id"],
+                         [("error", "not_entered")])  # it fails as the program starts, not in id
 
 
 if __name__ == "__main__":

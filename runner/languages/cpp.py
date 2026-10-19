@@ -6,7 +6,9 @@ argument-dependent lookup); templates, member functions, operators and later ove
 but skipped. Inputs add std::string("abc"), std::vector<T>{...}, braced lists and nullptr; reference
 parameters get a local variable to bind to; C array literals for pointer parameters become
 exact-size heap copies (phantom_arr). An exception that escapes reports its demangled type, what()
-and the stack at the throw, captured by a __cxa_throw hook in the runtime translation unit.
+and the stack at the throw, captured by a __cxa_throw hook in the runtime translation unit; when that
+throw is on the user's own line the function rejected its input on purpose (not a bug), while an
+exception thrown inside the library (vector::at, std::stoi) is reported at the user's calling line.
 """
 import re
 
@@ -88,8 +90,10 @@ class Cpp(C):
 void *phantom_copy(const void *data, std::size_t size);
 void *phantom_alloc(std::size_t size);
 int phantom_begin(int argc, char **argv);
+void phantom_enter(void);
 void phantom_void(void);
 void phantom_result(const char *text, std::size_t n);
+std::size_t phantom_cstr_len(const char *s, std::size_t max, int *cut);
 std::size_t phantom_float_text(char *out, std::size_t size, long double value);
 void phantom_exception(const char *type, const char *what);
 void phantom_unknown_exception(void);
@@ -132,9 +136,10 @@ template <class T> static std::string phantom_repr(const T &v) {
     }
     else if constexpr (std::is_same_v<U, char *> || std::is_same_v<U, const char *>) {
         if (!v) return "nullptr";
-        std::size_t n = 0;
-        while (n < 301 && v[n]) n++;
-        return phantom_quote(v, n, '"');
+        int cut = 0;  /* no length is known: stop at the NUL, or at the end of v's block (never past it) */
+        std::size_t n = phantom_cstr_len(v, 301, &cut);
+        if (cut && !n) return "(unreadable pointer)";
+        return phantom_quote(v, n, '"') + (cut ? " (not NUL-terminated)" : "");
     }
     else if constexpr (std::is_pointer_v<U> || std::is_null_pointer_v<U>) return v ? "(pointer)" : "nullptr";
     else if constexpr (std::is_convertible_v<const U &, std::string_view>) {

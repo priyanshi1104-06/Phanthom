@@ -8,6 +8,13 @@ names in the user's code. A run that dies without a verdict is classified from t
 (heap-buffer-overflow, signed integer overflow, null pointer dereference, stack-overflow...), at the
 innermost user.c frame. C++ (cpp.py) builds on this plugin.
 
+phantom_enter() creates .entered once the arguments are built, so a crash in a constructor
+function or a C++ static initializer is "not_entered", never a finding. A line that fails on purpose
+(an assert( that fails, an abort(, a C++ throw that escapes) is the function rejecting its input;
+exit(n), _exit(n) and quick_exit(n) are kind "exit". A returned char * is shown up to its NUL but
+never past the end of its block, and a returned pointer the harness can't read is not the function's
+crash: only the function's own code can fail.
+
 Inputs are literals. Arrays are compound literals, (int[]){1, 2, 3} or (char[]){"abc"}; the harness
 copies every array argument to a heap block of exactly its size, so one element too far is caught
 and string literals are writable. A pointer and its length parameter (values, count) change
@@ -47,7 +54,9 @@ SANITIZER_ENV = {
 }
 # one parameter value; size = an array's element count, a string's length or an integer's value
 Value = namedtuple("Value", "expr assumption size", defaults=(None, None))
-NUMBER = re.compile(r"[+-]?(0[xX][0-9a-fA-F]+|0[bB][01]+|(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?)[uUlLfF]{0,3}")
+NUMBER = re.compile(  # a well-formed integer (0x1F, 0b101, 0755, 10ul; not 08) or floating constant (1.5, 1e3f)
+    r"[+-]?(?:(?:0[xX][0-9a-fA-F]+|0[bB][01]+|0[0-7]*|[1-9][0-9]*)(?:[uU](?:ll|LL|[lL])?|(?:ll|LL|[lL])[uU]?)?"
+    r"|(?:(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)[fFlL]?)")
 UBSAN = (  # first matching phrase of a "runtime error:" line -> error name
     ("signed integer overflow", "signed integer overflow"), ("negation of", "signed integer overflow"),
     ("division of", "signed integer overflow"), ("division by zero", "division by zero"),
@@ -60,6 +69,8 @@ UBSAN = (  # first matching phrase of a "runtime error:" line -> error name
     ("variable length array bound", "invalid array size"), ("is not a valid value for type", "invalid value"),
     ("outside the range of representable values", "float to integer overflow"),
 )
+# what a run that really crashed leaves on stderr; a non-zero status without any of it is exit(n)/_exit(n)
+CRASH_REPORT = re.compile(r"Sanitizer|DEADLYSIGNAL|runtime error: |terminate called|Assertion [`']|stack-overflow")
 
 
 class C(Language):
@@ -89,7 +100,9 @@ class C(Language):
                     "(char[]){\"abc\"}, (const char *[]){\"a\", \"b\"}")
     compiler = ("gcc -std=gnu17 -g1 -O0 -fno-omit-frame-pointer -fsanitize=address,undefined "
                 "-fno-sanitize-recover=all -w -Werror=incompatible-pointer-types -Werror=int-conversion "
-                "-fdiagnostics-plain-output -fmax-errors=5")
+                "-fdiagnostics-plain-output -fmax-errors=5")  # gnu17/gnu++20: trigraphs (??/) are off
+    marks_entry = True  # phantom_enter() creates .entered once the arguments are built
+    rejection_pattern = r"\b(assert|abort)\s*\(|\bthrow\b"  # refined by deliberate()
 
     # ---------- functions ----------
 
@@ -148,6 +161,8 @@ class C(Language):
         if name_node.type in ("identifier", "field_identifier"):
             if name == "main" and not prefix:
                 return None  # the program's entry point: renamed away in the harness
+            if name == "main":  # ns::main: the harness's #define main renames it too, so it can't be called
+                skip = "functions named main are not run"
             name = prefix + name
         elif name_node.type == "qualified_identifier" and name.rpartition("::")[0].split("::")[-1] in namespaces:
             name = prefix + name  # a namespace function defined outside its namespace block
@@ -454,8 +469,9 @@ class C(Language):
         if node.type in ("string_literal", "concatenated_string"):
             return {**facts, "array": True, "size": self._strlen(node), "terminated": True}
         if node.type == "number_literal":
+            digits = re.sub(r"[uUlL]+$", "", self.text(node))
             try:
-                return {**facts, "value": int(re.sub(r"[uUlL]+$", "", self.text(node)), 0)}
+                return {**facts, "value": int(digits, 8) if re.fullmatch(r"0[0-7]+", digits) else int(digits, 0)}
             except ValueError:
                 return facts
         if node.type in ("char_literal", "true", "false", "null", "identifier"):
@@ -504,11 +520,6 @@ class C(Language):
             return tree, None  # a comment, or two arguments
         return tree, arguments.named_children[0]
 
-    def literal_ok(self, expr):
-        if "??" in (expr or ""):
-            return False  # a trigraph (??/ is a backslash in strict ISO mode) would read differently to GCC
-        return super().literal_ok(expr)
-
     def _literal_node(self, node, pointer_items=False):
         kind = node.type
         if pointer_items:  # elements of (const char *[]){...}: strings only, never NULL or 0
@@ -518,12 +529,15 @@ class C(Language):
             return False
         if kind == "number_literal":
             return bool(NUMBER.fullmatch(self.text(node)))
-        if kind == "string_literal":
-            return all(c.type in ("string_content", "escape_sequence") for c in node.named_children)
+        if kind == "string_literal":  # plain "...": no L/u/U/u8 prefix
+            return self.text(node).startswith('"') and \
+                all(c.type in ("string_content", "escape_sequence") for c in node.named_children)
         if kind == "concatenated_string":
             return all(c.type == "string_literal" and self._literal_node(c) for c in node.named_children)
-        if kind == "char_literal":
-            return all(c.type in ("character", "escape_sequence") for c in node.named_children)
+        if kind == "char_literal":  # exactly one plain character: no prefix, no 'ab', no multi-byte 'é'
+            items = node.named_children
+            return self.text(node).startswith("'") and len(items) == 1 and (
+                items[0].type == "escape_sequence" or items[0].type == "character" and len(items[0].text) == 1)
         if kind in ("true", "false", "null"):
             return True
         if kind == "identifier":
@@ -595,6 +609,7 @@ class C(Language):
                 lines += self._bind(k, p, s, arg)
             args = ", ".join(f"std::move(phantom_a{k})" if s["ref"] == "&&" else f"phantom_a{k}"
                              for k, s in enumerate(shapes))
+            lines.append("phantom_enter();")  # the arguments are built: a failure from here on is the function's
             lines += self._show(fn, f"{self._callee(fn)}({args})")
             bodies.append(f"static void phantom_input_{i}(void) {{\n    " + "\n    ".join(lines) + "\n}")
             cases.append(f"    case {i}: phantom_input_{i}(); break;")
@@ -640,6 +655,7 @@ class C(Language):
 #endif
 void *phantom_copy(const void *data, size_t size);
 int phantom_begin(int argc, char **argv);
+void phantom_enter(void);
 void phantom_void(void);
 void phantom_signed(long long value);
 void phantom_unsigned(unsigned long long value);
@@ -703,12 +719,24 @@ void phantom_result(const char *text, size_t n) {
 }
 static void phantom_at_exit(void) {  /* the code called exit(): deliberate, so never a finding */
     if (!phantom_reported)
-        printf("\nRESULT_MARK{\"ok\": false, \"kind\": \"no_verdict\", \"error\": \"NoVerdict\", "
+        printf("\nRESULT_MARK{\"ok\": false, \"kind\": \"exit\", \"error\": \"Exit\", "
                "\"message\": \"the code called exit() instead of returning\"}\n");
 }
 int phantom_begin(int argc, char **argv) {
     atexit(phantom_at_exit);
     return argc > 1 ? atoi(argv[1]) : -1;
+}
+void phantom_enter(void) {  /* the arguments are built: what fails from here on is the function's doing */
+    FILE *mark = fopen(".entered", "w");
+    if (mark) fclose(mark);
+}
+size_t phantom_cstr_len(const char *s, size_t max, int *cut) {
+    /* nothing says how long a returned char * is: read up to its NUL, but never into ASan's redzone
+       after its block, so showing a buffer that has no NUL can't crash the harness */
+    size_t n = 0;
+    while (n < max && !__asan_address_is_poisoned(s + n) && s[n]) n++;
+    *cut = n < max && __asan_address_is_poisoned(s + n);
+    return n;
 }
 void *phantom_alloc(size_t size) {
     /* exactly the array's size, so one element too far is a heap-buffer-overflow; malloc(0) leaves
@@ -741,23 +769,57 @@ void phantom_char(int c) {
     b[n++] = '\'';
     phantom_result(b, n);
 }
-void phantom_quoted(const char *s, size_t len) {
-    char b[1300]; size_t n = 0;
+static void phantom_quoted(const char *s, size_t len, const char *note) {
+    char b[1400]; size_t n = 0;
     b[n++] = '"';
     for (size_t i = 0; i < len && i < 300; i++) n += phantom_escape(b + n, (unsigned char)s[i], '"');
     if (len > 300) n += (size_t)sprintf(b + n, "...");
     b[n++] = '"';
+    n += (size_t)snprintf(b + n, sizeof b - n, "%s", note);
     phantom_result(b, n);
 }
 void phantom_string(const char *s) {
-    if (!s) phantom_result("NULL", 4);
-    else phantom_quoted(s, strnlen(s, 301));
+    int cut = 0;
+    size_t n;
+    if (!s) { phantom_result("NULL", 4); return; }
+    n = phantom_cstr_len(s, 301, &cut);
+    if (cut && !n) phantom_result("(unreadable pointer)", 20);  /* freed, or just past a block */
+    else phantom_quoted(s, n, cut ? " (not NUL-terminated)" : "");
 }
 void phantom_pointer(const void *p) { if (p) phantom_result("(pointer)", 9); else phantom_result("NULL", 4); }
 void phantom_value(const void *p) { (void)p; phantom_result("(value)", 7); }
 """.replace("RESULT_MARK", RESULT_MARK)
 
     # ---------- crashes ----------
+
+    def classify(self, code, out, err):
+        result = super().classify(code, out, err)
+        if result.get("kind") == "no_verdict":  # status 0 and no verdict: _exit(0), quick_exit(0)
+            return {"ok": False, "kind": "exit", "error": "Exit", "message": "the code ended the program itself"}
+        if result.get("kind") != "crash":
+            return result
+        if 0 < code < 126 and not CRASH_REPORT.search(err):  # _exit(2), quick_exit(2): it stopped on purpose
+            return {"ok": False, "kind": "exit", "error": "Exit",
+                    "message": f"the code ended the program itself (exit status {code})"}
+        if result.get("line") is None and display_crash(err):
+            return {"ok": False, "kind": "no_verdict", "error": "DisplayError",
+                    "message": f"the function returned a char * that can't be read to show it: {result['message']}"}
+        return result
+
+    def deliberate(self, source, failure):
+        """A line that fails on purpose, by the means it names: an assert( whose assertion failed, an
+        abort( that aborted, a throw whose exception escaped. strlen(NULL) on an assert line is still a bug."""
+        if not super().deliberate(source, failure):
+            return False
+        text = source.splitlines()[failure["line"] - 1]
+        error, message = failure.get("error"), failure.get("message") or ""
+        if failure.get("kind") == "exception":
+            return re.search(r"\bthrow\b", text) is not None
+        if error == "assertion failed" and message.startswith("Assertion `"):  # glibc's assert, not libstdc++'s
+            return re.search(r"\bassert\s*\(", text) is not None
+        if error in ("abort", "SIGABRT"):
+            return re.search(r"\babort\s*\(", text) is not None
+        return False
 
     def crash_error(self, code, err):
         lines = [ln.strip() for ln in err.splitlines() if ln.strip()]
@@ -801,6 +863,14 @@ void phantom_value(const void *p) { (void)p; phantom_result("(value)", 7); }
         if frames and "stack-overflow" in text:  # the recursive call, not wherever the stack happened to run out
             return int(max(frames, key=frames.count))
         return int(hits[0]) if hits else None
+
+
+def display_crash(err):
+    """Did the run die inside the harness showing a returned char * (a wild pointer), with no user frame?"""
+    for line in err.splitlines():
+        if re.match(r"\s*#\d+ ", line) and "phantom_" in line:
+            return re.search(r"\bphantom_(string|quoted|cstr_len)\b", line) is not None
+    return False
 
 
 def split_type(text):
