@@ -6,7 +6,7 @@ import ast
 from runner.context import function_context
 from runner.languages.base import Function, Language, Param
 
-ALLOWED = (ast.Expression, ast.Constant, ast.List, ast.Tuple, ast.Set, ast.Dict, ast.Load)
+ALLOWED = (ast.Expression, ast.Constant, ast.List, ast.Tuple, ast.Set, ast.Dict, ast.Load, ast.USub, ast.UAdd)
 
 TYPED = {
     "int": ["1", "0", "-1"],
@@ -29,6 +29,7 @@ class Python(Language):
     image = "phantom-sandbox"
     local_tool = "python3"
     null_words = ("None",)
+    rejection_pattern = r"^\s*(raise|assert)\b"  # the function refuses the input on purpose
     literal_hint = "numbers, strings, bytes, lists, tuples, dicts, sets, True/False, None"
 
     def functions(self, source):
@@ -69,6 +70,8 @@ class Python(Language):
             tree = ast.parse(expr, mode="eval")
         except SyntaxError:
             return False
+        if isinstance(tree.body, ast.Tuple) and not expr.strip().startswith("("):
+            return False  # "1, 2" would be two arguments, not one tuple
         for node in ast.walk(tree):
             if isinstance(node, ast.UnaryOp):
                 if not isinstance(node.op, (ast.USub, ast.UAdd)) or not isinstance(node.operand, ast.Constant):
@@ -124,15 +127,23 @@ class Python(Language):
         import worker  # its JSON helpers only: no analysed code runs in this process
         from runner.executor import run_job
 
-        calls = [worker.encode(list(ast.literal_eval(f"({', '.join(i.args)},)"))) if i.args else []
-                 for i in inputs]
+        calls, bad = [], {}
+        for n, inp in enumerate(inputs):
+            try:
+                calls.append(worker.encode(list(ast.literal_eval(f"({', '.join(inp.args)},)"))) if inp.args else [])
+            except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError) as exc:
+                bad[n] = {"ok": False, "kind": "input_error", "error": type(exc).__name__, "message": str(exc)[:200]}
+                calls.append(None)
+        good = [c for c in calls if c is not None]
         result = run_job({"mode": "calls", "source": self.context(source, fn), "func_name": fn.name,
-                          "calls": calls, "call_timeout": 1.0},
-                         timeout=10 + 2 * len(inputs), sandbox=sandbox)
-        if "results" in result:
-            return result["results"]
-        failure = {"ok": False, **{k: result.get(k) for k in ("kind", "error", "message")}}
-        return [failure] * len(inputs)
+                          "calls": good, "call_timeout": 1.0},
+                         timeout=10 + 2 * len(good), sandbox=sandbox) if good else {"results": []}
+        if "results" not in result:
+            failure = {"ok": False, **{k: result.get(k) for k in ("kind", "error", "message")}}
+            return [bad.get(n, failure) for n in range(len(inputs))]
+        ran = iter(result["results"])
+        results = [bad[n] if n in bad else next(ran) for n in range(len(inputs))]
+        return [{**r, "kind": "exit"} if r.get("error") == "SystemExit" else r for r in results]
 
 
 def split_top(text, sep):

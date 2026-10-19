@@ -75,6 +75,25 @@ class CheckTest(unittest.TestCase):
         findings = specter.confirm(fake, "src", FN, "docker", inputs, results, {"function": "f"})
         self.assertEqual([f["input"]["call"] for f in findings], ["f(13)"])
 
+    def test_one_bad_model_input_does_not_drop_the_other_model_inputs(self):
+        fake = Fake(compiles=lambda inputs: not any(i.args == ["99"] for i in inputs))
+        findings = specter.check_function(fake, "src", FN, "docker", model(["99"], ["13"]))
+        self.assertIn("f(13)", [f["input"]["call"] for f in findings])
+
+    def test_failing_on_purpose_is_not_a_bug(self):
+        class Rejecting(Fake):
+            rejection_pattern = r"\braise\b"
+        source = "def f(x):\n    raise ValueError('x must be positive')\n"
+        findings = specter.check_function(Rejecting(), source, FN, "docker", model(["13"]))
+        self.assertNotIn("bug", [f["status"] for f in findings])
+
+    def test_failing_before_the_function_is_called_is_not_a_bug(self):
+        class NotEntered(Fake):
+            def run_inputs(self, source, fn, inputs, sandbox):
+                return [{"ok": False, "kind": "not_entered", "error": "KeyError", "message": "DATABASE_URL"}] * len(inputs)
+        findings = specter.check_function(NotEntered(), "src", FN, "docker")
+        self.assertEqual([f["status"] for f in findings], ["error"])
+
     def test_code_that_never_builds_is_an_error(self):
         findings = specter.check_function(Fake(compiles=lambda inputs: False), "src", FN, "docker")
         self.assertEqual(findings[0]["status"], "error")

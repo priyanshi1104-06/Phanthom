@@ -14,6 +14,13 @@ The harness prints its verdict as a line starting with @@PHANTOM followed by JSO
     {"ok": false, "kind": "exception", "error": "TypeError", "message": "...", "trace": "..."}
 A process that dies without that line (segfault, sanitizer abort, stack overflow, timeout) is
 classified from its exit code and stderr by the plugin.
+
+Result kinds that are failures (specter.FAILURES): exception, timeout, crash, return_type. Kinds that
+are never findings: build_error (the code doesn't compile), not_entered (it failed before the function
+was called: while loading the file, running its init code or building the input), input_error,
+no_verdict, exit (the code ended the program on purpose), rejected (it threw on purpose).
+A harness with marks_entry = True creates the file `.entered` in its working directory right before it
+calls the function, after the arguments are built; base.script reports whether it exists.
 """
 import base64
 import json
@@ -69,6 +76,8 @@ class Language:
     literal_nodes = frozenset()  # tree-sitter node types allowed inside an input expression
     literal_calls = frozenset()  # callee texts allowed in an input expression: "vec", "List.of"
     literal_names = frozenset()  # names allowed as values: "undefined", "NaN", "Integer.MAX_VALUE"
+    marks_entry = False  # the harness creates .entered right before calling the function (see the docstring)
+    rejection_pattern = None  # regex for a source line that fails on purpose: raise, throw, assert...
 
     # ---------- parsing ----------
 
@@ -236,9 +245,9 @@ class Language:
         run = prog["run"]
         for i in range(len(inputs)):
             lines += [  # elapsed seconds tell a timeout's SIGKILL from the memory limit's; the verdict is printed last
-                f"s=$(date +%s); timeout -k 1 {self.call_timeout} {run.format(i=i)} > .out 2> .err < /dev/null",
-                "code=$?",
-                f"echo \"@@RUN {i} $code $(( $(date +%s) - s ))\"",
+                f"rm -f .entered; s=$(date +%s); timeout -k 1 {self.call_timeout} {run.format(i=i)} > .out 2> .err < /dev/null",
+                "code=$?; [ -f .entered ] && en=1 || en=0",
+                f"echo \"@@RUN {i} $code $(( $(date +%s) - s )) $en\"",
                 "tail -c 65536 .out | base64 -w0; echo",
                 "tail -c 65536 .err | base64 -w0; echo",
             ]
@@ -255,14 +264,18 @@ class Language:
                 failure = {"ok": False, "kind": "build_error", "error": "BuildError", "message": detail[-2000:]}
                 return [failure] * count
             if line.startswith("@@RUN "):
-                _, i, code, *elapsed = line.split()
+                _, i, code, *extra = line.split()
                 out = _b64(lines[index + 1] if index + 1 < len(lines) else "")
                 err = _b64(lines[index + 2] if index + 2 < len(lines) else "")
                 result = self.classify(int(code), out, err)
-                if result.get("kind") == "timeout" and code == "137" and elapsed and int(elapsed[0]) < self.call_timeout:
+                if result.get("kind") == "timeout" and code == "137" and extra and int(extra[0]) < self.call_timeout:
                     # SIGKILL before the time limit: the memory limit, not `timeout -k`
                     result = {**result, "kind": "crash", "error": "OutOfMemory",
-                              "message": f"killed after {elapsed[0]} s: the memory limit ({self.memory}) was reached"}
+                              "message": f"killed after {extra[0]} s: the memory limit ({self.memory}) was reached"}
+                if self.marks_entry and len(extra) > 1 and extra[1] == "0" and not result.get("ok") \
+                        and result.get("kind") in ("exception", "timeout", "crash", "return_type"):
+                    result = {**result, "kind": "not_entered",  # loading the file or building the input failed
+                              "message": f"before the function was called: {result.get('error')}: {result.get('message')}"}
                 results[int(i)] = result
                 index += 3
                 continue
@@ -303,6 +316,15 @@ class Language:
         signals = {134: "SIGABRT", 136: "SIGFPE", 139: "SIGSEGV", 135: "SIGBUS"}
         first = next((ln.strip() for ln in err.splitlines() if ln.strip()), "")
         return signals.get(code, f"exit {code}"), first[:300] or f"the process exited with code {code}"
+
+    def deliberate(self, source, failure):
+        """True when the failing line throws on purpose (raise, throw, assert...): the function rejects
+        that input as designed, which is not a bug. Plugins with better information override this."""
+        line = failure.get("line")
+        lines = source.splitlines()
+        if not self.rejection_pattern or not line or not 0 < line <= len(lines):
+            return False
+        return re.search(self.rejection_pattern, lines[line - 1]) is not None
 
     user_file = "main"  # file name (without extension) the user's code is written to; traces point at it
 

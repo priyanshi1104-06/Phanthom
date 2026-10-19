@@ -25,6 +25,7 @@ FAILURES = ("exception", "timeout", "crash", "return_type")
 MAX_MODEL_FUNCTIONS = 4  # model calls per run; the rest wait for the next pause
 MIN_CONFIDENCE = 0.3
 REPLAY_TRIES = 3  # inputs replayed per kind of failure before giving up on it
+SINGLE_BUILDS = 6  # model inputs built one at a time when they don't build together
 
 SYSTEM_PROMPT = """You are Specter, the fast first reviewer inside Phantom, a tool that finds bugs while code is being written.
 Phantom runs every input you suggest in a sandbox and shows a bug only if that input really makes the function fail, so a wrong guess costs nothing, but a bug without inputs is never shown.
@@ -148,8 +149,8 @@ def check_function(lang, source, fn, sandbox, answer=None):
     findings = []
     if inputs:
         inputs, results = run_all(lang, source, fn, inputs, sandbox)
-        if results and all(r.get("kind") == "build_error" for r in results):
-            return [{**base, "status": "error", "failure": results[0]}]
+        if results and all(r.get("kind") in ("build_error", "not_entered") for r in results):
+            return [{**base, "status": "error", "failure": results[0]}]  # doesn't build, or fails as it loads
         findings = confirm(lang, source, fn, sandbox, inputs, results, base)
     if lang.name == "python" and all(p.type for p in fn.params):
         findings = merge(findings, fuzz_python(source, fn, sandbox, base))
@@ -177,9 +178,15 @@ def run_all(lang, source, fn, inputs, sandbox):
     if not built(edge_results):
         return edge, edge_results
     model_results = lang.run_inputs(source, fn, model, sandbox)
-    if not built(model_results):
-        return edge, edge_results
-    return edge + model, edge_results + model_results
+    if built(model_results):
+        return edge + model, edge_results + model_results
+    kept, kept_results = [], []  # one bad model input: build the others one by one
+    for inp in model[:SINGLE_BUILDS]:
+        single = lang.run_inputs(source, fn, [inp], sandbox)
+        if built(single):
+            kept.append(inp)
+            kept_results += single
+    return edge + kept, edge_results + kept_results
 
 
 def confirm(lang, source, fn, sandbox, inputs, results, base):
@@ -187,7 +194,7 @@ def confirm(lang, source, fn, sandbox, inputs, results, base):
     fresh sandbox and keep it if it fails the same way. If it doesn't, the next simplest gets a turn."""
     groups = {}
     for inp, res in zip(inputs, results):
-        if res.get("ok") is False and res.get("kind") in FAILURES:
+        if res.get("ok") is False and res.get("kind") in FAILURES and not lang.deliberate(source, res):
             rank = (len(inp.assumptions), inp.origin != "edge", len(", ".join(inp.args)))
             groups.setdefault((res.get("kind"), res.get("error"), res.get("line")), []).append((rank, inp, res))
     findings = []
@@ -222,7 +229,8 @@ def fuzz_python(source, fn, sandbox, base):
     from runner.context import function_context
 
     finding = analyze_function(function_context(source, fn.name), fn.name, sandbox=sandbox)
-    if finding.get("status") != "bug":
+    if finding.get("status") != "bug" or finding["failure"].get("error") == "SystemExit" \
+            or languages.get("python").deliberate(source, finding["failure"]):
         return []
     return [{**base, "status": "bug", "severity": "error", "origin": "fuzz", "assumptions": [],
              "input": finding["input"],
