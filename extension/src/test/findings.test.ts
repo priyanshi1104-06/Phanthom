@@ -103,4 +103,5 @@ test('the panel talks about the file and says how each bug was found', () => {
   assert.match(panelView('a.py', { findings: [findings[5]] }).message, /no failing input.*isn't proof/);
   assert.match(panelView('a.py', { offline: true, problem: 'Python packages missing' }).message, /can't reach my backend/);
   assert.match(panelView('a.py', { running: true }).message, /^Checking/);
+  assert.equal(panelView('a.py', { findings: [] }).message, 'There are no functions in this file for me to check.');
 });

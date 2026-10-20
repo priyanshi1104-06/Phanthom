@@ -60,6 +60,10 @@
       {
         "command": "phantom.restartBackend",
         "title": "Phantom: Restart Backend"
+      },
+      {
+        "command": "phantom.welcome",
+        "title": "Phantom: Welcome"
       }
     ],
     "configuration": {

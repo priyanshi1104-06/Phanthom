@@ -255,7 +255,9 @@ export function panelView(file: string, state: {
     .sort((a, b) => ['error', 'warning', 'info'].indexOf(a.severity) - ['error', 'warning', 'info'].indexOf(b.severity));
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
   let message: string;
-  if (bugs.length === 0) {
+  if (functions === 0) {
+    message = 'There are no functions in this file for me to check.';
+  } else if (bugs.length === 0) {
     message = `I checked ${plural(functions, 'function')} and found no failing input. That isn't proof there are no bugs.`;
   } else {
     message = `I checked ${plural(functions, 'function')}. ` +

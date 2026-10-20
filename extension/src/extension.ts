@@ -43,9 +43,16 @@ const SEVERITY = {
   hint: vscode.DiagnosticSeverity.Hint,
 };
 
+const WALKTHROUGH = 'phantom.phantom#phantom.welcome';
+
 export function activate(context: vscode.ExtensionContext): void {
   const phantom = new Phantom(context);
-  context.subscriptions.push(phantom);
+  context.subscriptions.push(phantom, vscode.commands.registerCommand('phantom.welcome',
+    () => vscode.commands.executeCommand('workbench.action.openWalkthrough', WALKTHROUGH, false)));
+  if (!context.globalState.get<boolean>('phantom.welcomed')) {  // first start after installing: say hello
+    void context.globalState.update('phantom.welcomed', true);
+    void vscode.commands.executeCommand('workbench.action.openWalkthrough', WALKTHROUGH, false);
+  }
 }
 
 export function deactivate(): void {}

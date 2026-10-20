@@ -2,7 +2,7 @@
 //   - start it when the extension needs it (python -m backend, from the bundled server/ folder),
 //   - stop it when VS Code closes,
 //   - "Phantom: Set Up": a private Python environment, its packages and the sandbox images, once.
-// The Anthropic API key lives in VS Code's secret storage and reaches the backend as an
+// The AI key lives in VS Code's secret storage and reaches the backend as an
 // environment variable; it is never written to a file.
 import { ChildProcess, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -169,14 +169,14 @@ export class Backend implements vscode.Disposable {
     return true;
   }
 
-  /** Store (or clear) the Anthropic API key in VS Code's secret storage, then restart the backend. */
+  /** Store (or clear) the AI key in VS Code's secret storage, then restart the backend. */
   async askForKey(): Promise<void> {
     const key = await vscode.window.showInputBox({
-      title: 'Phantom: Anthropic API key',
-      prompt: 'Lets Phantom\'s models suggest inputs and rate risk. Leave empty to run without models.',
+      title: 'Phantom AI key',
+      prompt: 'Lets Phantom\'s AI suggest extra inputs and rate risk. Press Enter with nothing typed to use Phantom\'s engine only.',
       password: true,
       ignoreFocusOut: true,
-      placeHolder: 'sk-ant-...',
+      placeHolder: 'paste your key, or leave empty',
     });
     if (key === undefined) {
       return;
