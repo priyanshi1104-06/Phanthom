@@ -48,18 +48,29 @@ def load_env(path=ROOT / ".env"):
         os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
-# What the editor offers in its model picker; any claude-* id is accepted from settings or .env.
-MODEL_CHOICES = [
-    {"id": "claude-haiku-5-5", "label": "Haiku 5.5", "detail": "fastest"},
-    {"id": "claude-sonnet-5-5", "label": "Sonnet 5.5", "detail": "balanced"},
-    {"id": "claude-opus-5-5", "label": "Opus 5.5", "detail": "deep"},
-    {"id": "claude-fable-5-1", "label": "Fable 5.1", "detail": "deepest, slowest"},
-]
-MODEL_ID = re.compile(r"claude-[a-z0-9.-]{1,60}")
+# Phantom's tiers: what users pick in the editor. Which supplier model sits behind each tier is decided
+# here, on the server (PHANTOM_TIER_SWIFT=... overrides), so the editor never names a model or a supplier.
+TIERS = {
+    "swift": {"label": "Swift", "detail": "fastest", "model": "claude-haiku-5-5"},
+    "balanced": {"label": "Balanced", "detail": "deeper, a little slower", "model": "claude-sonnet-5-5"},
+    "deep": {"label": "Deep", "detail": "for tricky code", "model": "claude-opus-5-5"},
+    "deepest": {"label": "Deepest", "detail": "slowest, most thorough", "model": "claude-fable-5-1"},
+}
+LAYER_TIERS = {"specter": "swift", "analyst": "balanced", "oracle": "deepest"}  # defaults
+MODEL_ID = re.compile(r"[a-z][a-z0-9.:/-]{1,80}")
 
 
-def valid_model(model):
-    return isinstance(model, str) and MODEL_ID.fullmatch(model) is not None
+def tier_model(tier):
+    """The model id behind a tier, or None for an unknown tier."""
+    if tier not in TIERS:
+        return None
+    model = os.environ.get(f"PHANTOM_TIER_{tier.upper()}", TIERS[tier]["model"])
+    return model if MODEL_ID.fullmatch(model) else None
+
+
+def tier_choices():
+    """What the editor may show: tier ids, names and descriptions, never model ids."""
+    return [{"id": tier, "label": t["label"], "detail": t["detail"]} for tier, t in TIERS.items()]
 
 
 def layer_settings(layer):
@@ -93,15 +104,15 @@ def set_provider(new_provider):
             _status.update(provider=type(new_provider).__name__, available=True, detail="ready")
 
 
-def ask(layer, system, prompt, schema, model=None):
-    """One structured answer from the layer's model (or `model`, the user's pick for this request),
-    or None (models off, error, refusal, bad JSON)."""
+def ask(layer, system, prompt, schema, tier=None):
+    """One structured answer from the layer's model (or the model behind `tier`, the user's pick for
+    this request), or None (models off, error, refusal, bad JSON)."""
     current = provider()
     if current is None:
         return None
     settings = {**layer_settings(layer), "layer": layer}
-    if valid_model(model):
-        settings["model"] = model
+    if tier_model(tier):
+        settings["model"] = tier_model(tier)
     try:
         answer = current.complete_json(settings, system, prompt, schema)
     except ModelUnavailable as exc:

@@ -1,5 +1,6 @@
 """Context extraction, static checks and the HTTP backend the extension talks to."""
 import ast
+import json
 import time
 import unittest
 from pathlib import Path
@@ -80,7 +81,8 @@ class BackendTest(unittest.TestCase):
         self.assertIn("available", health["model"])
         self.assertTrue(health["layers"]["specter"]["built"])
         self.assertFalse(health["layers"]["oracle"]["built"])
-        self.assertIn("claude-opus-5-5", [m["id"] for m in health["model_choices"]])
+        self.assertEqual([t["id"] for t in health["tiers"]], ["swift", "balanced", "deep", "deepest"])
+        self.assertNotIn("claude", json.dumps(health["tiers"]))  # the editor never sees a supplier
 
     def test_the_users_model_choice_reaches_the_model(self):
         from runner import llm
@@ -88,7 +90,7 @@ class BackendTest(unittest.TestCase):
         llm.set_provider(provider)
         self.addCleanup(llm.set_provider, None)
         source = "def pick(a: int) -> int:\n    return a\n"
-        self.client.post("/specter", json={"source": source, "models": {"specter": "claude-opus-5-5"}})
+        self.client.post("/specter", json={"source": source, "models": {"specter": "deep"}})
         self.client.post("/specter", json={"source": source.replace("a\n", "a + 0\n"), "models": {"specter": "rm -rf"}})
         self.assertEqual([c["settings"]["model"] for c in provider.calls], ["claude-opus-5-5", "claude-haiku-5-5"])
 

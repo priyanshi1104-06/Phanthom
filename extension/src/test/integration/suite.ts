@@ -44,6 +44,14 @@ export async function run(): Promise<void> {
   assert.ok(average, 'a squiggle for average([])');
   assert.equal(average.range.start.line, 9); // line 10: return sum(values) / len(values)
 
+  // The Phantom panel and its commands are there (the panel shows what Phantom found in this file).
+  await vscode.commands.executeCommand('workbench.view.extension.phantom');
+  const commands = await vscode.commands.getCommands(true);
+  for (const command of ['phantom.setUp', 'phantom.chooseDepth', 'phantom.setApiKey', 'phantom.restartBackend']) {
+    assert.ok(commands.includes(command), command);
+  }
+  await vscode.window.showTextDocument(doc);
+
   // 2. A "Replay" link for each reproduced bug.
   const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', uri);
   const replays = lenses.filter((lens) => lens.command?.command === 'phantom.replay');
@@ -72,6 +80,11 @@ export async function run(): Promise<void> {
   const jsBugs = await waitFor('JavaScript bugs', () => confirmed(js),
     (d) => hasAll(d.map((x) => x.message), ['average', 'firstWord', 'lastPrice', 'padLabel', 'parsePort', 'collatzSteps', 'factorial']));
   assert.equal(jsBugs.find((d) => d.message.includes('average([])'))!.range.start.line, 7);
+  if (process.env.PHANTOM_TEST_SCREENSHOT) {  // for the docs: the Phantom panel next to buggy.js
+    await vscode.commands.executeCommand('workbench.view.extension.phantom');
+    await sleep(4000);
+    require('node:child_process').execFileSync('import', ['-window', 'root', process.env.PHANTOM_TEST_SCREENSHOT]);
+  }
   const nullHints = vscode.languages.getDiagnostics(js).filter((d) => d.severity === vscode.DiagnosticSeverity.Hint);
   assert.ok(nullHints.some((d) => d.message.startsWith('Fails if text may be null')), 'a null-only hint');
 }
