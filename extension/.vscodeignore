@@ -1,0 +1,8 @@
+src/**
+scripts/**
+out/test/**
+.vscode-test/**
+**/*.map
+tsconfig.json
+node_modules/**
+server/**/__pycache__/**

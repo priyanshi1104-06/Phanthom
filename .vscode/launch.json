@@ -1,0 +1,35 @@
+{
+  // F5 with "Phantom: backend + extension" starts the backend and a second VS Code window
+  // (the "Extension Development Host") with the extension loaded and samples/ open.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Phantom backend",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "backend",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONDONTWRITEBYTECODE": "1" },
+      "subProcess": false,
+      "justMyCode": true,
+      // Run, don't debug: the debugger would pause the backend on harmless internal exceptions
+      // (GeneratorExit, StopIteration) and the editor would wait forever. Remove to debug the backend.
+      "noDebug": true
+    },
+    {
+      "name": "Phantom extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/extension", "${workspaceFolder}/samples"],
+      "outFiles": ["${workspaceFolder}/extension/out/**/*.js"],
+      "preLaunchTask": "Compile extension"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Phantom: backend + extension",
+      "configurations": ["Phantom backend", "Phantom extension"],
+      "stopAll": true
+    }
+  ]
+}

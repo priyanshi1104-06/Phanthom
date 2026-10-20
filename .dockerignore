@@ -1,0 +1,6 @@
+.venv/
+.git/
+__pycache__/
+.env
+extension/node_modules/
+extension/out/

@@ -1,0 +1,193 @@
+{
+  "name": "phantom",
+  "displayName": "Phantom",
+  "description": "Finds bugs while you type, in Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby and PHP, and backs each one with a failing input reproduced in a sandbox.",
+  "version": "0.1.0",
+  "publisher": "phantom",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:python",
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:go",
+    "onLanguage:java",
+    "onLanguage:c",
+    "onLanguage:cpp",
+    "onLanguage:rust",
+    "onLanguage:ruby",
+    "onLanguage:php"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "phantom.analyze",
+        "title": "Phantom: Analyse This File Now"
+      },
+      {
+        "command": "phantom.replay",
+        "title": "Phantom: Replay Failing Input"
+      },
+      {
+        "command": "phantom.showOutput",
+        "title": "Phantom: Show Output"
+      },
+      {
+        "command": "phantom.setUp",
+        "title": "Phantom: Set Up (Python packages, sandboxes, API key)"
+      },
+      {
+        "command": "phantom.setApiKey",
+        "title": "Phantom: Set Anthropic API Key"
+      },
+      {
+        "command": "phantom.chooseDepth",
+        "title": "Phantom: Choose Depth and Models"
+      },
+      {
+        "command": "phantom.chooseModel",
+        "title": "Phantom: Choose Model for a Layer"
+      },
+      {
+        "command": "phantom.restartBackend",
+        "title": "Phantom: Restart Backend"
+      }
+    ],
+    "configuration": {
+      "title": "Phantom",
+      "properties": {
+        "phantom.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Analyse supported files while you type."
+        },
+        "phantom.backendUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8765",
+          "description": "Address of the Phantom backend (python -m backend)."
+        },
+        "phantom.debounceMs": {
+          "type": "number",
+          "default": 700,
+          "minimum": 100,
+          "description": "How long to wait after you stop typing before analysing."
+        },
+        "phantom.shadowRun": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run each function on boundary inputs (and the model's suggestions) in the sandbox to find reproducible bugs."
+        },
+        "phantom.useModel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let Phantom's models suggest inputs and rate risk (needs an Anthropic API key: \"Phantom: Set Anthropic API Key\"). Their inputs only count if they reproduce in the sandbox."
+        },
+        "phantom.depth": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "specter",
+            "analyst",
+            "oracle"
+          ],
+          "enumDescriptions": [
+            "Specter always; deeper layers only when an edit is risky",
+            "Specter only",
+            "Up to the Analyst (coming in 0.2)",
+            "Up to the Oracle (coming in 0.3)"
+          ],
+          "description": "How deep Phantom looks."
+        },
+        "phantom.models.specter": {
+          "type": "string",
+          "default": "claude-haiku-5-5",
+          "enum": [
+            "claude-haiku-5-5",
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+            "claude-fable-5-1"
+          ],
+          "enumItemLabels": [
+            "Haiku 5.5",
+            "Sonnet 5.5",
+            "Opus 5.5",
+            "Fable 5.1"
+          ],
+          "description": "Claude model used by Specter (fast, every pause)."
+        },
+        "phantom.models.analyst": {
+          "type": "string",
+          "default": "claude-sonnet-5-5",
+          "enum": [
+            "claude-haiku-5-5",
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+            "claude-fable-5-1"
+          ],
+          "enumItemLabels": [
+            "Haiku 5.5",
+            "Sonnet 5.5",
+            "Opus 5.5",
+            "Fable 5.1"
+          ],
+          "description": "Claude model used by the Analyst (from 0.2)."
+        },
+        "phantom.models.oracle": {
+          "type": "string",
+          "default": "claude-fable-5-1",
+          "enum": [
+            "claude-haiku-5-5",
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+            "claude-fable-5-1"
+          ],
+          "enumItemLabels": [
+            "Haiku 5.5",
+            "Sonnet 5.5",
+            "Opus 5.5",
+            "Fable 5.1"
+          ],
+          "description": "Claude model used by the Oracle (from 0.3)."
+        },
+        "phantom.startBackend": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the Phantom backend automatically when it isn't running."
+        },
+        "phantom.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Python that runs the backend. Empty: the environment \"Phantom: Set Up\" created, else python3."
+        },
+        "phantom.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Folder with Phantom's backend. Empty: the copy bundled with the extension."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test out/test/*.test.js",
+    "test:integration": "npm run compile && node out/test/integration/run.js",
+    "bundle": "node scripts/bundle-server.js",
+    "package": "npm run compile && npm run bundle && vsce package --allow-missing-repository --skip-license"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/vscode": "1.100.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "^3.6.2",
+    "typescript": "7.0.2"
+  }
+}
