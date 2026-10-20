@@ -43,7 +43,8 @@ async function main(): Promise<void> {
       extensionDevelopmentPath: installed ?? extensionRoot,
       extensionTestsPath: path.join(__dirname, 'suite'),
       extensionTestsEnv: { PHANTOM_TEST_BACKEND: `http://127.0.0.1:${port}`, PHANTOM_REPO: repoRoot,
-        PHANTOM_TEST_PYTHON: installed ? (process.env.PHANTOM_PYTHON ?? '') : '' },
+        PHANTOM_TEST_PYTHON: installed ? (process.env.PHANTOM_PYTHON ?? '') : '',
+        PHANTOM_TEST_SCREENSHOT: process.env.PHANTOM_TEST_SCREENSHOT ?? '' },
       launchArgs: [path.join(repoRoot, 'samples'), '--disable-extensions', ...(asRoot ? ['--no-sandbox'] : [])],
     });
   } finally {

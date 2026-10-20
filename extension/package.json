@@ -13,16 +13,18 @@
     "Linters"
   ],
   "activationEvents": [
-    "onLanguage:python",
-    "onLanguage:javascript",
-    "onLanguage:typescript",
-    "onLanguage:go",
-    "onLanguage:java",
     "onLanguage:c",
     "onLanguage:cpp",
-    "onLanguage:rust",
+    "onLanguage:go",
+    "onLanguage:java",
+    "onLanguage:javascript",
+    "onLanguage:php",
+    "onLanguage:python",
     "onLanguage:ruby",
-    "onLanguage:php"
+    "onLanguage:rust",
+    "onLanguage:typescript",
+    "onStartupFinished",
+    "onView:phantom.panel"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -41,19 +43,19 @@
       },
       {
         "command": "phantom.setUp",
-        "title": "Phantom: Set Up (Python packages, sandboxes, API key)"
+        "title": "Phantom: Set Up"
       },
       {
         "command": "phantom.setApiKey",
-        "title": "Phantom: Set Anthropic API Key"
+        "title": "Phantom: Set AI Key"
       },
       {
         "command": "phantom.chooseDepth",
-        "title": "Phantom: Choose Depth and Models"
+        "title": "Phantom: Choose Depth and Tiers"
       },
       {
         "command": "phantom.chooseModel",
-        "title": "Phantom: Choose Model for a Layer"
+        "title": "Phantom: Choose Tier for a Layer"
       },
       {
         "command": "phantom.restartBackend",
@@ -87,7 +89,7 @@
         "phantom.useModel": {
           "type": "boolean",
           "default": true,
-          "description": "Let Phantom's models suggest inputs and rate risk (needs an Anthropic API key: \"Phantom: Set Anthropic API Key\"). Their inputs only count if they reproduce in the sandbox."
+          "description": "Let Phantom's AI suggest extra inputs and rate risk (needs an AI key: \"Phantom: Set AI Key\"). Its inputs only count if they reproduce in the sandbox; without it, Phantom's own engine still finds and proves bugs."
         },
         "phantom.depth": {
           "type": "string",
@@ -106,57 +108,6 @@
           ],
           "description": "How deep Phantom looks."
         },
-        "phantom.models.specter": {
-          "type": "string",
-          "default": "claude-haiku-5-5",
-          "enum": [
-            "claude-haiku-5-5",
-            "claude-sonnet-5-5",
-            "claude-opus-5-5",
-            "claude-fable-5-1"
-          ],
-          "enumItemLabels": [
-            "Haiku 5.5",
-            "Sonnet 5.5",
-            "Opus 5.5",
-            "Fable 5.1"
-          ],
-          "description": "Claude model used by Specter (fast, every pause)."
-        },
-        "phantom.models.analyst": {
-          "type": "string",
-          "default": "claude-sonnet-5-5",
-          "enum": [
-            "claude-haiku-5-5",
-            "claude-sonnet-5-5",
-            "claude-opus-5-5",
-            "claude-fable-5-1"
-          ],
-          "enumItemLabels": [
-            "Haiku 5.5",
-            "Sonnet 5.5",
-            "Opus 5.5",
-            "Fable 5.1"
-          ],
-          "description": "Claude model used by the Analyst (from 0.2)."
-        },
-        "phantom.models.oracle": {
-          "type": "string",
-          "default": "claude-fable-5-1",
-          "enum": [
-            "claude-haiku-5-5",
-            "claude-sonnet-5-5",
-            "claude-opus-5-5",
-            "claude-fable-5-1"
-          ],
-          "enumItemLabels": [
-            "Haiku 5.5",
-            "Sonnet 5.5",
-            "Opus 5.5",
-            "Fable 5.1"
-          ],
-          "description": "Claude model used by the Oracle (from 0.3)."
-        },
         "phantom.startBackend": {
           "type": "boolean",
           "default": true,
@@ -171,9 +122,143 @@
           "type": "string",
           "default": "",
           "description": "Folder with Phantom's backend. Empty: the copy bundled with the extension."
+        },
+        "phantom.tiers.specter": {
+          "type": "string",
+          "default": "swift",
+          "enum": [
+            "swift",
+            "balanced",
+            "deep",
+            "deepest"
+          ],
+          "enumItemLabels": [
+            "Swift",
+            "Balanced",
+            "Deep",
+            "Deepest"
+          ],
+          "enumDescriptions": [
+            "fastest",
+            "deeper, a little slower",
+            "for tricky code",
+            "slowest, most thorough"
+          ],
+          "description": "How deeply Specter (every pause in typing) thinks."
+        },
+        "phantom.tiers.analyst": {
+          "type": "string",
+          "default": "balanced",
+          "enum": [
+            "swift",
+            "balanced",
+            "deep",
+            "deepest"
+          ],
+          "enumItemLabels": [
+            "Swift",
+            "Balanced",
+            "Deep",
+            "Deepest"
+          ],
+          "enumDescriptions": [
+            "fastest",
+            "deeper, a little slower",
+            "for tricky code",
+            "slowest, most thorough"
+          ],
+          "description": "How deeply the Analyst (from 0.2) thinks."
+        },
+        "phantom.tiers.oracle": {
+          "type": "string",
+          "default": "deepest",
+          "enum": [
+            "swift",
+            "balanced",
+            "deep",
+            "deepest"
+          ],
+          "enumItemLabels": [
+            "Swift",
+            "Balanced",
+            "Deep",
+            "Deepest"
+          ],
+          "enumDescriptions": [
+            "fastest",
+            "deeper, a little slower",
+            "for tricky code",
+            "slowest, most thorough"
+          ],
+          "description": "How deeply the Oracle (from 0.3) thinks."
         }
       }
-    }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "phantom",
+          "title": "Phantom",
+          "icon": "media/phantom.svg"
+        }
+      ]
+    },
+    "views": {
+      "phantom": [
+        {
+          "type": "webview",
+          "id": "phantom.panel",
+          "name": "Phantom"
+        }
+      ]
+    },
+    "walkthroughs": [
+      {
+        "id": "phantom.welcome",
+        "title": "Meet Phantom",
+        "description": "Phantom finds bugs while you write code, and proves each one by running it.",
+        "steps": [
+          {
+            "id": "meet",
+            "title": "Phantom is in your editor",
+            "description": "Phantom watches the functions you change. When you pause typing, it runs them on inputs designed to break them, in a locked sandbox, and tells you only about failures it can replay.\n[Open the Phantom panel](command:workbench.view.extension.phantom)",
+            "media": {
+              "markdown": "media/walkthrough/meet.md"
+            }
+          },
+          {
+            "id": "setup",
+            "title": "Set up once",
+            "description": "Phantom needs Docker for its sandboxes. Set Up installs its engine and the sandbox for each language.\n[Run Set Up](command:phantom.setUp)",
+            "media": {
+              "markdown": "media/walkthrough/setup.md"
+            },
+            "completionEvents": [
+              "onCommand:phantom.setUp"
+            ]
+          },
+          {
+            "id": "read",
+            "title": "Read a finding",
+            "description": "Red: fails on an input your types allow. Yellow: fails under an assumption. Faint dots: only on null. ▶ Replay runs the input again against your current code.",
+            "media": {
+              "markdown": "media/walkthrough/read.md"
+            }
+          },
+          {
+            "id": "depth",
+            "title": "Choose depth and tier",
+            "description": "Specter checks every pause. The Analyst and the Oracle look deeper and arrive as updates. Pick how deep each layer thinks.\n[Choose depth and tiers](command:phantom.chooseDepth)",
+            "media": {
+              "markdown": "media/walkthrough/depth.md"
+            },
+            "completionEvents": [
+              "onCommand:phantom.chooseDepth"
+            ]
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "compile": "tsc -p ./",
@@ -189,5 +274,10 @@
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "^3.6.2",
     "typescript": "7.0.2"
+  },
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0b0b0d",
+    "theme": "dark"
   }
 }

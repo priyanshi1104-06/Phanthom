@@ -2,7 +2,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import {
-  bugLine, bugMessage, chosenModels, comingIn, confirmedBugs, DEPTHS, depthText, modelLabel, describeReplay, diagnosticLevel, Finding, lensTitle, Risk, riskText,
+  bugLine, bugMessage, chosenTiers, comingIn, confirmedBugs, DEPTHS, depthText, panelView, tierLabel, describeReplay, diagnosticLevel, Finding, lensTitle, Risk, riskText,
   statusText, toZeroBased,
 } from '../findings';
 
@@ -84,11 +84,23 @@ test('status bar: counts, risk and escalation', () => {
   assert.equal(riskText({ ...risk, escalate: null, level: 'medium' }), 'risk medium');
 });
 
-test('depth and model pickers', () => {
-  const models = chosenModels({ specter: 'claude-sonnet-5-5', analyst: 'not a model' });
-  assert.deepEqual(models, { specter: 'claude-sonnet-5-5', analyst: 'claude-sonnet-5-5', oracle: 'claude-fable-5-1' });
-  assert.equal(modelLabel('claude-opus-5-5'), 'Opus 5.5');
-  assert.equal(depthText('auto', models, true), '$(layers) Auto · Specter: Sonnet 5.5');
-  assert.equal(depthText('specter', models, false), '$(layers) Specter only · models off');
+test('depth and tier pickers never name a model or supplier', () => {
+  const tiers = chosenTiers({ specter: 'balanced', analyst: 'claude-opus-5-5' });
+  assert.deepEqual(tiers, { specter: 'balanced', analyst: 'balanced', oracle: 'deepest' });
+  assert.equal(tierLabel('deep'), 'Deep');
+  assert.equal(depthText('auto', tiers, true), '$(layers) Auto · Specter Balanced');
+  assert.equal(depthText('specter', tiers, false), '$(layers) Specter only · engine only');
   assert.deepEqual(DEPTHS.map(comingIn), [undefined, undefined, 'coming in 0.2', 'coming in 0.3']);
+});
+
+test('the panel talks about the file and says how each bug was found', () => {
+  const view = panelView('samples/buggy.js', { findings });
+  assert.equal(view.message, 'I checked 7 functions. 3 inputs the types allow make the code fail; 1 more fails under an assumption; 1 only when handed null.');
+  assert.equal(view.cards[0].severity, 'error');
+  assert.equal(view.cards[0].how, "Found by Phantom's boundary inputs, proven by replaying it in a fresh sandbox.");
+  assert.equal(view.cards[0].why, 'Raises ZeroDivisionError: division by zero');  // the call is shown above it
+  assert.deepEqual(view.cards.map((c) => c.severity), ['error', 'error', 'error', 'warning', 'info']);
+  assert.match(panelView('a.py', { findings: [findings[5]] }).message, /no failing input.*isn't proof/);
+  assert.match(panelView('a.py', { offline: true, problem: 'Python packages missing' }).message, /can't reach my backend/);
+  assert.match(panelView('a.py', { running: true }).message, /^Checking/);
 });

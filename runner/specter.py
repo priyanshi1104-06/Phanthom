@@ -105,7 +105,7 @@ def key(*parts):
 
 # ---------- the model's hypotheses ----------
 
-def ask_model(lang, source, fn, model=None):
+def ask_model(lang, source, fn, tier=None):
     """The model's hypotheses for one function, or None when no model answer is available."""
     nonce = secrets.token_hex(4)
     lines = source.splitlines()
@@ -115,7 +115,7 @@ def ask_model(lang, source, fn, model=None):
     prompt = (f"Language: {lang.title}\nFunction: {fn.name} (lines {fn.line}-{fn.end_line})\n"
               f"Parameters, in order:\n{params}\nDeclared return type: {fn.returns or 'none'}\n"
               f"Allowed input forms: {lang.literal_hint}\n\n<code-{nonce}>\n{numbered}\n</code-{nonce}>")
-    return llm.ask("specter", SYSTEM_PROMPT, prompt, SCHEMA, model=model)
+    return llm.ask("specter", SYSTEM_PROMPT, prompt, SCHEMA, tier=tier)
 
 
 def model_inputs(lang, fn, answer):
@@ -293,10 +293,10 @@ def run(source, language=None, path=None, use_model=True, previous=None, models=
     def answer_for(fn):
         if fn.name not in asked:
             return None
-        chosen = (models or {}).get("specter")
-        model = chosen if llm.valid_model(chosen) else llm.layer_settings("specter")["model"]
+        tier = (models or {}).get("specter")
+        model = llm.tier_model(tier) or llm.layer_settings("specter")["model"]
         return model_cache.get(key("model", model, lang.name, fn.name, lang.context(source, fn)),
-                               lambda: ask_model(lang, source, fn, model))
+                               lambda: ask_model(lang, source, fn, tier))
 
     def findings_for(fn):
         hypotheses = answer_for(fn)

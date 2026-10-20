@@ -168,15 +168,14 @@ export function statusText(bugs: ConfirmedBug[], sandbox: string | undefined, ri
 export type Layer = 'specter' | 'analyst' | 'oracle';
 export const LAYER_NAMES: Record<Layer, string> = { specter: 'Specter', analyst: 'Analyst', oracle: 'Oracle' };
 export const BUILT_LAYERS: Layer[] = ['specter'];  // the others arrive in updates of this same extension
-export const DEFAULT_MODELS: Record<Layer, string> = {
-  specter: 'claude-haiku-5-5', analyst: 'claude-sonnet-5-5', oracle: 'claude-fable-5-1',
-};
-export const MODEL_CHOICES = [
-  { id: 'claude-haiku-5-5', label: 'Haiku 5.5', detail: 'fastest' },
-  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', detail: 'balanced' },
-  { id: 'claude-opus-5-5', label: 'Opus 5.5', detail: 'deep' },
-  { id: 'claude-fable-5-1', label: 'Fable 5.1', detail: 'deepest, slowest' },
+/** Phantom's tiers; which model sits behind each one is decided on the Phantom server. */
+export const TIERS = [
+  { id: 'swift', label: 'Swift', detail: 'fastest' },
+  { id: 'balanced', label: 'Balanced', detail: 'deeper, a little slower' },
+  { id: 'deep', label: 'Deep', detail: 'for tricky code' },
+  { id: 'deepest', label: 'Deepest', detail: 'slowest, most thorough' },
 ];
+export const DEFAULT_TIERS: Record<Layer, string> = { specter: 'swift', analyst: 'balanced', oracle: 'deepest' };
 
 export interface Depth { id: 'auto' | Layer; label: string; detail: string; needs: Layer[] }
 export const DEPTHS: Depth[] = [
@@ -192,22 +191,81 @@ export function comingIn(depth: Depth): string | undefined {
   return missing ? `coming in ${missing === 'analyst' ? '0.2' : '0.3'}` : undefined;
 }
 
-export function modelLabel(id: string | undefined): string {
-  return MODEL_CHOICES.find((m) => m.id === id)?.label ?? id ?? '';
+export function tierLabel(id: string | undefined): string {
+  return TIERS.find((t) => t.id === id)?.label ?? DEFAULT_TIERS.specter;
 }
 
-/** Models per layer from the user's settings, defaults filled in. */
-export function chosenModels(settings: Partial<Record<Layer, string>>): Record<Layer, string> {
-  const valid = (id?: string) => !!id && /^claude-[a-z0-9.-]{1,60}$/.test(id);
-  return {
-    specter: valid(settings.specter) ? settings.specter! : DEFAULT_MODELS.specter,
-    analyst: valid(settings.analyst) ? settings.analyst! : DEFAULT_MODELS.analyst,
-    oracle: valid(settings.oracle) ? settings.oracle! : DEFAULT_MODELS.oracle,
-  };
+/** Tier per layer from the user's settings, defaults filled in for anything unknown. */
+export function chosenTiers(settings: Partial<Record<Layer, string>>): Record<Layer, string> {
+  const pick = (layer: Layer) => TIERS.some((t) => t.id === settings[layer]) ? settings[layer]! : DEFAULT_TIERS[layer];
+  return { specter: pick('specter'), analyst: pick('analyst'), oracle: pick('oracle') };
 }
 
-/** The depth/model status item: "$(layers) Auto · Specter: Haiku 5.5" (no key: "models off"). */
-export function depthText(depthId: string, models: Record<Layer, string>, hasModels: boolean): string {
+/** The depth/tier status item: "$(layers) Auto · Specter Swift" (no AI: "engine only"). */
+export function depthText(depthId: string, tiers: Record<Layer, string>, hasModels: boolean): string {
   const depth = DEPTHS.find((d) => d.id === depthId) ?? DEPTHS[0];
-  return `$(layers) ${depth.label} · ${hasModels ? `Specter: ${modelLabel(models.specter)}` : 'models off'}`;
+  return `$(layers) ${depth.label} · ${hasModels ? `Specter ${tierLabel(tiers.specter)}` : 'engine only'}`;
+}
+
+// ---------- the side panel: Phantom talking about the active file ----------
+
+export const ORIGINS: Record<string, string> = {
+  edge: "Found by Phantom's boundary inputs",
+  fuzz: "Found by Phantom's fuzzer",
+  model: "Suggested by Phantom's AI",
+};
+
+export interface PanelCard {
+  index: number; function: string; call: string; line: number | null; severity: 'error' | 'warning' | 'info';
+  headline: string; why: string; how: string; assumptions: string[];
+}
+
+export interface PanelView { title: string; message: string; cards: PanelCard[]; risk: string }
+
+const SEVERITY_HEADLINE = { error: 'Confirmed bug', warning: 'Fails under an assumption', info: 'Only fails on null' };
+
+/** What the panel says about one file: a sentence in Phantom's voice plus one card per reproduced failure. */
+export function panelView(file: string, state: {
+  findings?: Finding[]; running?: boolean; offline?: boolean; setup?: string; problem?: string; risk?: Risk;
+}): PanelView {
+  const title = file || 'Phantom';
+  const risk = riskText(state.risk);
+  if (state.offline) {
+    return { title, risk, cards: [], message: `I can't reach my backend. ${state.problem ?? 'Run "Phantom: Set Up" once.'}` };
+  }
+  if (state.setup) {
+    return { title, risk, cards: [], message: `I need a sandbox for this language first: run "Phantom: Set Up".` };
+  }
+  if (!state.findings) {
+    return { title, risk, cards: [], message: state.running ? 'Checking the functions you changed…' : 'Pause typing and I\'ll check this file.' };
+  }
+  const bugs = confirmedBugs(state.findings);
+  const functions = new Set(state.findings.map((f) => f.function)).size;
+  const errors = bugs.filter((b) => b.severity === 'error').length;
+  const assumed = bugs.filter((b) => b.severity === 'warning').length;
+  const nulls = bugs.filter((b) => b.severity === 'info').length;
+  const cards = bugs
+    .map((bug, index) => ({
+      index, function: bug.function, call: bug.input.call, line: bug.failure.line, severity: bug.severity,
+      headline: SEVERITY_HEADLINE[bug.severity],
+      why: capitalize(bugMessage(bug).replace(/^[^:]*\(reproduced\)[.:]\s*/, '').replace(bug.input.call + ' ', '')),
+      how: `${ORIGINS[bug.origin ?? 'edge'] ?? ORIGINS.edge}, proven by replaying it in a fresh sandbox.`,
+      assumptions: bug.assumptions,
+    }))
+    .sort((a, b) => ['error', 'warning', 'info'].indexOf(a.severity) - ['error', 'warning', 'info'].indexOf(b.severity));
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  let message: string;
+  if (bugs.length === 0) {
+    message = `I checked ${plural(functions, 'function')} and found no failing input. That isn't proof there are no bugs.`;
+  } else {
+    message = `I checked ${plural(functions, 'function')}. ` +
+      (errors ? `${plural(errors, 'input')} the types allow make the code fail` : 'Nothing fails on inputs the types allow') +
+      (assumed ? `; ${assumed} more ${assumed === 1 ? 'fails' : 'fail'} under an assumption` : '') +
+      (nulls ? `; ${nulls} only when handed null` : '') + '.';
+  }
+  return { title, risk, cards, message: state.running ? `${message} Checking again…` : message };
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

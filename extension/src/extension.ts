@@ -7,10 +7,11 @@
 // The extension starts its own backend (server.ts); a second status item picks the depth and the models.
 import * as vscode from 'vscode';
 import {
-  bugLine, bugMessage, chosenModels, comingIn, ConfirmedBug, confirmedBugs, DEPTHS, depthText, describeReplay,
-  diagnosticLevel, escalationReason, Finding, Layer, LAYER_NAMES, lensTitle, MODEL_CHOICES, modelLabel, ReplayResult,
-  Risk, StaticFinding, statusText, SUPPORTED_LANGUAGES, toZeroBased,
+  bugLine, bugMessage, chosenTiers, comingIn, ConfirmedBug, confirmedBugs, DEPTHS, depthText, describeReplay,
+  diagnosticLevel, escalationReason, Finding, Layer, LAYER_NAMES, lensTitle, panelView, ReplayResult,
+  Risk, StaticFinding, statusText, SUPPORTED_LANGUAGES, TIERS, tierLabel, toZeroBased,
 } from './findings';
+import { PanelAction, PhantomPanel } from './panel';
 import { Backend } from './server';
 
 interface FileState {
@@ -19,6 +20,7 @@ interface FileState {
   staticDiagnostics: vscode.Diagnostic[];
   bugDiagnostics: vscode.Diagnostic[];
   bugs: ConfirmedBug[];
+  findings?: Finding[];  // everything the last run said, for the side panel
   risk?: Risk;
   sandbox?: string;
   setup?: string;
@@ -54,6 +56,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
   private readonly depthStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
   private readonly server: Backend;
+  private readonly panel = new PhantomPanel((action) => void this.onPanelAction(action));
   private hasModels = false;
   private readonly lensesChanged = new vscode.EventEmitter<void>();
   private readonly files = new Map<string, FileState>();
@@ -68,12 +71,13 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     this.depthStatus.command = 'phantom.chooseDepth';
     this.server = new Backend(context, (message) => this.log(message), () => this.config().backendUrl);
     this.disposables.push(
-      this.diagnostics, this.output, this.status, this.depthStatus, this.lensesChanged, this.server,
+      this.diagnostics, this.output, this.status, this.depthStatus, this.lensesChanged, this.server, this.panel,
+      vscode.window.registerWebviewViewProvider(PhantomPanel.id, this.panel),
       vscode.commands.registerCommand('phantom.setUp', () => this.server.setUp().then(() => this.afterStart())),
       vscode.commands.registerCommand('phantom.setApiKey', () => this.server.askForKey().then(() => this.afterStart())),
       vscode.commands.registerCommand('phantom.restartBackend', () => this.server.restart().then(() => this.afterStart())),
       vscode.commands.registerCommand('phantom.chooseDepth', () => this.chooseDepth()),
-      vscode.commands.registerCommand('phantom.chooseModel', (layer?: Layer) => this.chooseModel(layer)),
+      vscode.commands.registerCommand('phantom.chooseModel', (layer?: Layer) => this.chooseTier(layer)),
       vscode.languages.registerCodeLensProvider(SUPPORTED_LANGUAGES.map((language) => ({ language })), this),
       vscode.workspace.onDidChangeTextDocument((e) => this.schedule(e.document)),
       vscode.workspace.onDidOpenTextDocument((doc) => this.schedule(doc, 0)),
@@ -125,37 +129,81 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     items.push({ label: '', kind: vscode.QuickPickItemKind.Separator, run: () => undefined });
     for (const layer of Object.keys(LAYER_NAMES) as Layer[]) {
       items.push({
-        label: `$(sparkle) ${LAYER_NAMES[layer]} model: ${modelLabel(config.models[layer])}`,
+        label: `$(sparkle) ${LAYER_NAMES[layer]}: ${tierLabel(config.tiers[layer])}`,
         description: layer === 'specter' ? '' : `used from ${layer === 'analyst' ? '0.2' : '0.3'}`,
-        run: () => this.chooseModel(layer),
+        run: () => this.chooseTier(layer),
       });
     }
-    items.push({ label: this.hasModels ? '$(key) Change the Anthropic API key' : '$(key) Add an Anthropic API key (models are off)',
+    items.push({ label: this.hasModels ? '$(key) Change the AI key' : '$(key) Add an AI key (now: Phantom\'s engine only)',
       run: () => vscode.commands.executeCommand('phantom.setApiKey') });
-    const picked = await vscode.window.showQuickPick(items, { title: 'Phantom: depth and models' });
+    const picked = await vscode.window.showQuickPick(items, { title: 'Phantom: depth and tiers' });
     await picked?.run();
   }
 
-  private async chooseModel(layer?: Layer): Promise<void> {
+  private async chooseTier(layer?: Layer): Promise<void> {
     const chosen = layer ?? (await vscode.window.showQuickPick(
       (Object.keys(LAYER_NAMES) as Layer[]).map((l) => ({ label: LAYER_NAMES[l], layer: l })),
-      { title: 'Phantom: model for which layer?' }))?.layer;
+      { title: 'Phantom: tier for which layer?' }))?.layer;
     if (!chosen) {
       return;
     }
-    const current = this.config().models[chosen];
+    const current = this.config().tiers[chosen];
     const picked = await vscode.window.showQuickPick(
-      MODEL_CHOICES.map((m) => ({ label: `${m.id === current ? '$(check) ' : ''}${m.label}`, description: m.detail, id: m.id })),
-      { title: `Phantom: model for ${LAYER_NAMES[chosen]}` });
+      TIERS.map((t) => ({ label: `${t.id === current ? '$(check) ' : ''}${t.label}`, description: t.detail, id: t.id })),
+      { title: `Phantom: tier for ${LAYER_NAMES[chosen]}` });
     if (picked) {
-      await vscode.workspace.getConfiguration('phantom').update(`models.${chosen}`, picked.id, vscode.ConfigurationTarget.Global);
+      await vscode.workspace.getConfiguration('phantom').update(`tiers.${chosen}`, picked.id, vscode.ConfigurationTarget.Global);
+    }
+  }
+
+  // ---------- the side panel ----------
+
+  private refreshPanel(): void {
+    const doc = vscode.window.activeTextEditor?.document;
+    const config = this.config();
+    const state = doc && this.supported(doc) ? this.files.get(doc.uri.toString()) : undefined;
+    const file = doc && this.supported(doc) ? vscode.workspace.asRelativePath(doc.uri) : '';
+    const view = doc && this.supported(doc)
+      ? panelView(file, { findings: state?.findings, running: this.running > 0, offline: this.offline, setup: state?.setup,
+        problem: this.server.problem, risk: state?.risk })
+      : { title: 'Phantom', risk: '', cards: [], message: 'Open a file in a language I know and I\'ll check it as you type.' };
+    const depth = DEPTHS.find((d) => d.id === config.depth)?.label ?? 'Auto';
+    this.panel.show(view, depth, config.tiers.specter);
+  }
+
+  private async onPanelAction(action: PanelAction): Promise<void> {
+    if (action.type === 'depth') {
+      return this.chooseDepth();
+    }
+    if (action.type === 'setUp') {
+      return void vscode.commands.executeCommand('phantom.setUp');
+    }
+    const editor = vscode.window.activeTextEditor;
+    const state = editor ? this.files.get(editor.document.uri.toString()) : undefined;
+    const view = editor && state ? panelView('', { findings: state.findings }) : undefined;
+    if (!('index' in action)) {
+      return;
+    }
+    const index = action.index;
+    const card = view?.cards.find((c) => c.index === index);
+    const bug = card ? state!.bugs.find((b) => b.function === card.function && b.input.call === card.call) : undefined;
+    if (!editor || !bug) {
+      return;
+    }
+    if (action.type === 'reveal') {
+      const line = editor.document.lineAt(bugLine(bug, editor.document.lineCount));
+      editor.selection = new vscode.Selection(line.range.start, line.range.start);
+      editor.revealRange(line.range, vscode.TextEditorRevealType.InCenter);
+      await vscode.window.showTextDocument(editor.document, editor.viewColumn);
+    } else {
+      await this.replay(editor.document.uri, bug);
     }
   }
 
   private updateDepthStatus(): void {
     const config = this.config();
-    this.depthStatus.text = depthText(config.depth, config.models, this.hasModels);
-    this.depthStatus.tooltip = 'Phantom: choose the depth and the model for each layer';
+    this.depthStatus.text = depthText(config.depth, config.tiers, this.hasModels);
+    this.depthStatus.tooltip = 'Phantom: choose the depth and the tier of each layer';
     this.depthStatus.show();
   }
 
@@ -178,8 +226,8 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
       shadowRun: c.get<boolean>('shadowRun', true),
       useModel: c.get<boolean>('useModel', true),
       depth: c.get<string>('depth', 'auto'),
-      models: chosenModels({
-        specter: c.get<string>('models.specter'), analyst: c.get<string>('models.analyst'), oracle: c.get<string>('models.oracle'),
+      tiers: chosenTiers({
+        specter: c.get<string>('tiers.specter'), analyst: c.get<string>('tiers.analyst'), oracle: c.get<string>('tiers.oracle'),
       }),
     };
   }
@@ -278,13 +326,14 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
         return;
       }
       const answer = await this.post<SpecterAnswer>(
-        '/specter', { ...body, model: this.config().useModel, models: this.config().models }, controller.signal);
+        '/specter', { ...body, model: this.config().useModel, models: this.config().tiers }, controller.signal);
       if (stale() || !answer.parsed) {
         return;
       }
       state.sandbox = answer.sandbox;
       state.setup = answer.setup;
       state.risk = answer.risk ?? state.risk;
+      state.findings = answer.findings;
       state.bugs = confirmedBugs(answer.findings);
       state.bugDiagnostics = state.bugs.map((bug) => this.bugDiagnostic(doc, bug));
       this.publish(doc);
@@ -378,6 +427,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
   }
 
   private updateStatus(): void {
+    this.refreshPanel();
     const doc = vscode.window.activeTextEditor?.document;
     if (!this.config().enabled || !doc || !this.supported(doc)) {
       this.status.hide();
