@@ -4,11 +4,14 @@
 //   3. Specter's run (seconds)                       -> squiggles only for failures reproduced in the sandbox:
 //        red = fails on an input its types allow, yellow = needs an assumption, faint dots = only on null
 // and show a "Replay" link above each function with a confirmed or assumed bug.
+// The extension starts its own backend (server.ts); a second status item picks the depth and the models.
 import * as vscode from 'vscode';
 import {
-  bugLine, bugMessage, ConfirmedBug, confirmedBugs, describeReplay, diagnosticLevel, escalationReason, Finding,
-  lensTitle, ReplayResult, Risk, StaticFinding, statusText, SUPPORTED_LANGUAGES, toZeroBased,
+  bugLine, bugMessage, chosenModels, comingIn, ConfirmedBug, confirmedBugs, DEPTHS, depthText, describeReplay,
+  diagnosticLevel, escalationReason, Finding, Layer, LAYER_NAMES, lensTitle, MODEL_CHOICES, modelLabel, ReplayResult,
+  Risk, StaticFinding, statusText, SUPPORTED_LANGUAGES, toZeroBased,
 } from './findings';
+import { Backend } from './server';
 
 interface FileState {
   timer?: NodeJS.Timeout;
@@ -39,7 +42,7 @@ const SEVERITY = {
 };
 
 export function activate(context: vscode.ExtensionContext): void {
-  const phantom = new Phantom();
+  const phantom = new Phantom(context);
   context.subscriptions.push(phantom);
 }
 
@@ -49,6 +52,9 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly diagnostics = vscode.languages.createDiagnosticCollection('phantom');
   private readonly output = vscode.window.createOutputChannel('Phantom');
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+  private readonly depthStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+  private readonly server: Backend;
+  private hasModels = false;
   private readonly lensesChanged = new vscode.EventEmitter<void>();
   private readonly files = new Map<string, FileState>();
   private readonly disposables: vscode.Disposable[] = [];
@@ -57,10 +63,17 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
 
   readonly onDidChangeCodeLenses = this.lensesChanged.event;
 
-  constructor() {
+  constructor(context: vscode.ExtensionContext) {
     this.status.command = 'phantom.showOutput';
+    this.depthStatus.command = 'phantom.chooseDepth';
+    this.server = new Backend(context, (message) => this.log(message), () => this.config().backendUrl);
     this.disposables.push(
-      this.diagnostics, this.output, this.status, this.lensesChanged,
+      this.diagnostics, this.output, this.status, this.depthStatus, this.lensesChanged, this.server,
+      vscode.commands.registerCommand('phantom.setUp', () => this.server.setUp().then(() => this.afterStart())),
+      vscode.commands.registerCommand('phantom.setApiKey', () => this.server.askForKey().then(() => this.afterStart())),
+      vscode.commands.registerCommand('phantom.restartBackend', () => this.server.restart().then(() => this.afterStart())),
+      vscode.commands.registerCommand('phantom.chooseDepth', () => this.chooseDepth()),
+      vscode.commands.registerCommand('phantom.chooseModel', (layer?: Layer) => this.chooseModel(layer)),
       vscode.languages.registerCodeLensProvider(SUPPORTED_LANGUAGES.map((language) => ({ language })), this),
       vscode.workspace.onDidChangeTextDocument((e) => this.schedule(e.document)),
       vscode.workspace.onDidOpenTextDocument((doc) => this.schedule(doc, 0)),
@@ -81,6 +94,69 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
       vscode.commands.registerCommand('phantom.showOutput', () => this.output.show()),
     );
     this.restart();
+    void this.server.ensure().then(() => this.afterStart());
+  }
+
+  /** After the backend (re)started: learn whether models can be used, then analyse open files again. */
+  private async afterStart(): Promise<void> {
+    try {
+      const health = await (await fetch(this.config().backendUrl + '/health')).json() as { model?: { available?: boolean } };
+      this.hasModels = !!health.model?.available;
+      this.offline = false;
+    } catch {
+      this.hasModels = false;
+    }
+    this.restart();
+  }
+
+  // ---------- depth and models ----------
+
+  private async chooseDepth(): Promise<void> {
+    const config = this.config();
+    type Item = vscode.QuickPickItem & { run: () => Thenable<unknown> | void };
+    const items: Item[] = DEPTHS.map((depth) => ({
+      label: `${depth.id === config.depth ? '$(check) ' : ''}${depth.label}`,
+      description: comingIn(depth) ?? '',
+      detail: depth.detail,
+      run: () => comingIn(depth)
+        ? vscode.window.showInformationMessage(`Phantom: ${depth.label} is ${comingIn(depth)}, an update of this extension.`)
+        : vscode.workspace.getConfiguration('phantom').update('depth', depth.id, vscode.ConfigurationTarget.Global),
+    }));
+    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator, run: () => undefined });
+    for (const layer of Object.keys(LAYER_NAMES) as Layer[]) {
+      items.push({
+        label: `$(sparkle) ${LAYER_NAMES[layer]} model: ${modelLabel(config.models[layer])}`,
+        description: layer === 'specter' ? '' : `used from ${layer === 'analyst' ? '0.2' : '0.3'}`,
+        run: () => this.chooseModel(layer),
+      });
+    }
+    items.push({ label: this.hasModels ? '$(key) Change the Anthropic API key' : '$(key) Add an Anthropic API key (models are off)',
+      run: () => vscode.commands.executeCommand('phantom.setApiKey') });
+    const picked = await vscode.window.showQuickPick(items, { title: 'Phantom: depth and models' });
+    await picked?.run();
+  }
+
+  private async chooseModel(layer?: Layer): Promise<void> {
+    const chosen = layer ?? (await vscode.window.showQuickPick(
+      (Object.keys(LAYER_NAMES) as Layer[]).map((l) => ({ label: LAYER_NAMES[l], layer: l })),
+      { title: 'Phantom: model for which layer?' }))?.layer;
+    if (!chosen) {
+      return;
+    }
+    const current = this.config().models[chosen];
+    const picked = await vscode.window.showQuickPick(
+      MODEL_CHOICES.map((m) => ({ label: `${m.id === current ? '$(check) ' : ''}${m.label}`, description: m.detail, id: m.id })),
+      { title: `Phantom: model for ${LAYER_NAMES[chosen]}` });
+    if (picked) {
+      await vscode.workspace.getConfiguration('phantom').update(`models.${chosen}`, picked.id, vscode.ConfigurationTarget.Global);
+    }
+  }
+
+  private updateDepthStatus(): void {
+    const config = this.config();
+    this.depthStatus.text = depthText(config.depth, config.models, this.hasModels);
+    this.depthStatus.tooltip = 'Phantom: choose the depth and the model for each layer';
+    this.depthStatus.show();
   }
 
   dispose(): void {
@@ -101,6 +177,10 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
       debounceMs: c.get<number>('debounceMs', 700),
       shadowRun: c.get<boolean>('shadowRun', true),
       useModel: c.get<boolean>('useModel', true),
+      depth: c.get<string>('depth', 'auto'),
+      models: chosenModels({
+        specter: c.get<string>('models.specter'), analyst: c.get<string>('models.analyst'), oracle: c.get<string>('models.oracle'),
+      }),
     };
   }
 
@@ -198,7 +278,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
         return;
       }
       const answer = await this.post<SpecterAnswer>(
-        '/specter', { ...body, model: this.config().useModel }, controller.signal);
+        '/specter', { ...body, model: this.config().useModel, models: this.config().models }, controller.signal);
       if (stale() || !answer.parsed) {
         return;
       }
@@ -216,9 +296,12 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
       if (controller.signal.aborted) {
         return;
       }
+      if (!this.offline && await this.server.ensure()) {
+        this.schedule(doc, 0);  // it was just (re)started: try again at once
+        return;
+      }
       if (!this.offline) {
-        this.log(`Backend not reachable at ${this.config().backendUrl} (${error}). ` +
-          'Start it in a terminal: python -m backend');
+        this.log(`Backend not reachable at ${this.config().backendUrl} (${error}). ${this.server.problem ?? ''}`);
       }
       this.offline = true;
       this.schedule(doc, RETRY_MS);
@@ -298,12 +381,15 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     const doc = vscode.window.activeTextEditor?.document;
     if (!this.config().enabled || !doc || !this.supported(doc)) {
       this.status.hide();
+      this.depthStatus.hide();
       return;
     }
+    this.updateDepthStatus();
     const state = this.files.get(doc.uri.toString());
     if (this.offline) {
       this.status.text = '$(debug-disconnect) Phantom: backend offline';
-      this.status.tooltip = 'Start the backend in a terminal: python -m backend';
+      this.status.tooltip = `${this.server.problem ?? 'The backend is not running.'} Click for the log; ` +
+        'run "Phantom: Set Up" once, or "Phantom: Restart Backend".';
     } else if (state?.setup) {
       this.status.text = `$(tools) Phantom: ${doc.languageId} not set up`;
       this.status.tooltip = `No sandbox for this language yet. In a terminal: ${state.setup}`;

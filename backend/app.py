@@ -43,6 +43,7 @@ class Source(BaseModel):
     language: str | None = None
     path: str | None = None
     model: bool = True
+    models: dict[str, str] | None = None  # the user's model per layer: {"specter": "claude-sonnet-5-5"}
 
 
 class Replay(BaseModel):
@@ -94,7 +95,9 @@ def health():
     for lang in languages.LANGUAGES.values():
         ready[lang.name] = {"title": lang.title, "vscode_ids": list(lang.vscode_ids), "sandbox": lang.sandbox()}
     python = ready.get("python", {}).get("sandbox")
-    return {"ok": True, "sandbox": python, "languages": ready, "model": llm.status()}
+    layers = {name: {"model": llm.layer_settings(name)["model"], "built": name == "specter"} for name in llm.LAYERS}
+    return {"ok": True, "sandbox": python, "languages": ready, "model": llm.status(),
+            "layers": layers, "model_choices": llm.MODEL_CHOICES}
 
 
 @app.post("/static")
@@ -119,7 +122,8 @@ def triage(request: Source):
 def run_specter(request: Source):
     language, path = language_of(request)
     key = file_key(request)
-    answer = specter.run(request.source, language, path, use_model=request.model, previous=last_look.get(key))
+    answer = specter.run(request.source, language, path, use_model=request.model, previous=last_look.get(key),
+                         models=request.models)
     if answer.get("parsed"):
         last_look.put(key, specter.function_texts(request.source, language, path))
     return answer

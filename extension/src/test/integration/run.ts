@@ -28,21 +28,26 @@ async function waitForBackend(url: string, backend: ChildProcess): Promise<void>
 
 async function main(): Promise<void> {
   const port = process.env.PHANTOM_PORT ?? '8799';
-  const backend = spawn(process.env.PHANTOM_PYTHON ?? 'python3', ['-m', 'backend'], {
+  // PHANTOM_TEST_INSTALLED=<unpacked .vsix folder>: test the packaged extension, which must start its own backend.
+  const installed = process.env.PHANTOM_TEST_INSTALLED;
+  const backend = installed ? undefined : spawn(process.env.PHANTOM_PYTHON ?? 'python3', ['-m', 'backend'], {
     cwd: repoRoot, env: { ...process.env, PHANTOM_PORT: port, PYTHONDONTWRITEBYTECODE: '1' }, stdio: 'inherit',
   });
   try {
-    await waitForBackend(`http://127.0.0.1:${port}`, backend);
+    if (backend) {
+      await waitForBackend(`http://127.0.0.1:${port}`, backend);
+    }
     const asRoot = process.getuid?.() === 0; // e.g. in a container: Chromium needs --no-sandbox then
     await runTests({
       vscodeExecutablePath: process.env.VSCODE_EXECUTABLE,
-      extensionDevelopmentPath: extensionRoot,
+      extensionDevelopmentPath: installed ?? extensionRoot,
       extensionTestsPath: path.join(__dirname, 'suite'),
-      extensionTestsEnv: { PHANTOM_TEST_BACKEND: `http://127.0.0.1:${port}`, PHANTOM_REPO: repoRoot },
+      extensionTestsEnv: { PHANTOM_TEST_BACKEND: `http://127.0.0.1:${port}`, PHANTOM_REPO: repoRoot,
+        PHANTOM_TEST_PYTHON: installed ? (process.env.PHANTOM_PYTHON ?? '') : '' },
       launchArgs: [path.join(repoRoot, 'samples'), '--disable-extensions', ...(asRoot ? ['--no-sandbox'] : [])],
     });
   } finally {
-    backend.kill();
+    backend?.kill();
   }
 }
 

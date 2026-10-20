@@ -105,7 +105,7 @@ def key(*parts):
 
 # ---------- the model's hypotheses ----------
 
-def ask_model(lang, source, fn):
+def ask_model(lang, source, fn, model=None):
     """The model's hypotheses for one function, or None when no model answer is available."""
     nonce = secrets.token_hex(4)
     lines = source.splitlines()
@@ -115,7 +115,7 @@ def ask_model(lang, source, fn):
     prompt = (f"Language: {lang.title}\nFunction: {fn.name} (lines {fn.line}-{fn.end_line})\n"
               f"Parameters, in order:\n{params}\nDeclared return type: {fn.returns or 'none'}\n"
               f"Allowed input forms: {lang.literal_hint}\n\n<code-{nonce}>\n{numbered}\n</code-{nonce}>")
-    return llm.ask("specter", SYSTEM_PROMPT, prompt, SCHEMA)
+    return llm.ask("specter", SYSTEM_PROMPT, prompt, SCHEMA, model=model)
 
 
 def model_inputs(lang, fn, answer):
@@ -271,7 +271,7 @@ def function_texts(source, language=None, path=None):
     return {fn.name: fn.text for fn in lang.functions(source)}
 
 
-def run(source, language=None, path=None, use_model=True, previous=None):
+def run(source, language=None, path=None, use_model=True, previous=None, models=None):
     """Specter's answer for a file: risk, findings per function, and where the code ran."""
     lang = languages.resolve(language, path)
     if lang is None:
@@ -293,9 +293,10 @@ def run(source, language=None, path=None, use_model=True, previous=None):
     def answer_for(fn):
         if fn.name not in asked:
             return None
-        settings = llm.layer_settings("specter")
-        return model_cache.get(key("model", settings["model"], lang.name, fn.name, lang.context(source, fn)),
-                               lambda: ask_model(lang, source, fn))
+        chosen = (models or {}).get("specter")
+        model = chosen if llm.valid_model(chosen) else llm.layer_settings("specter")["model"]
+        return model_cache.get(key("model", model, lang.name, fn.name, lang.context(source, fn)),
+                               lambda: ask_model(lang, source, fn, model))
 
     def findings_for(fn):
         hypotheses = answer_for(fn)

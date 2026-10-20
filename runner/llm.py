@@ -18,6 +18,7 @@ code can do - it can suppress hypotheses, never create a confirmed bug.
 """
 import json
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -45,6 +46,20 @@ def load_env(path=ROOT / ".env"):
             continue
         key, value = line.split("=", 1)
         os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
+# What the editor offers in its model picker; any claude-* id is accepted from settings or .env.
+MODEL_CHOICES = [
+    {"id": "claude-haiku-5-5", "label": "Haiku 5.5", "detail": "fastest"},
+    {"id": "claude-sonnet-5-5", "label": "Sonnet 5.5", "detail": "balanced"},
+    {"id": "claude-opus-5-5", "label": "Opus 5.5", "detail": "deep"},
+    {"id": "claude-fable-5-1", "label": "Fable 5.1", "detail": "deepest, slowest"},
+]
+MODEL_ID = re.compile(r"claude-[a-z0-9.-]{1,60}")
+
+
+def valid_model(model):
+    return isinstance(model, str) and MODEL_ID.fullmatch(model) is not None
 
 
 def layer_settings(layer):
@@ -78,12 +93,15 @@ def set_provider(new_provider):
             _status.update(provider=type(new_provider).__name__, available=True, detail="ready")
 
 
-def ask(layer, system, prompt, schema):
-    """One structured answer from the layer's model, or None (models off, error, refusal, bad JSON)."""
+def ask(layer, system, prompt, schema, model=None):
+    """One structured answer from the layer's model (or `model`, the user's pick for this request),
+    or None (models off, error, refusal, bad JSON)."""
     current = provider()
     if current is None:
         return None
     settings = {**layer_settings(layer), "layer": layer}
+    if valid_model(model):
+        settings["model"] = model
     try:
         answer = current.complete_json(settings, system, prompt, schema)
     except ModelUnavailable as exc:

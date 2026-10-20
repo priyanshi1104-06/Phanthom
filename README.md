@@ -25,7 +25,17 @@ python phantom.py languages     # what is supported and ready
 python phantom.py setup         # pull/build every language's sandbox image (or: setup go rust ...)
 ```
 
-## Setup (once)
+## Install (as a user)
+
+1. Build the extension once: `cd extension && npm install && npm run package` gives `phantom-0.1.0.vsix`.
+2. In VS Code: **Extensions → ⋯ → Install from VSIX…** and pick that file.
+3. Command Palette (Ctrl+Shift+P) → **Phantom: Set Up**. It creates Phantom's own Python environment, pulls the
+   sandbox images (needs Docker) and asks for an optional Anthropic API key, stored in VS Code's secret storage.
+
+The extension starts and stops its own backend. Click **$(layers) Auto · Specter: Haiku 5.5** in the status bar
+to choose the depth (Auto, Specter only; Analyst and Oracle arrive as updates) and the Claude model for each layer.
+
+## Setup (for development)
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate

@@ -2,7 +2,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import {
-  bugLine, bugMessage, confirmedBugs, describeReplay, diagnosticLevel, Finding, lensTitle, Risk, riskText,
+  bugLine, bugMessage, chosenModels, comingIn, confirmedBugs, DEPTHS, depthText, modelLabel, describeReplay, diagnosticLevel, Finding, lensTitle, Risk, riskText,
   statusText, toZeroBased,
 } from '../findings';
 
@@ -82,4 +82,13 @@ test('status bar: counts, risk and escalation', () => {
   assert.equal(statusText([], 'local'), '$(check) Phantom: not sandboxed');
   assert.equal(statusText([], 'docker', { ...risk, level: 'low', escalate: null }), '$(check) Phantom');
   assert.equal(riskText({ ...risk, escalate: null, level: 'medium' }), 'risk medium');
+});
+
+test('depth and model pickers', () => {
+  const models = chosenModels({ specter: 'claude-sonnet-5-5', analyst: 'not a model' });
+  assert.deepEqual(models, { specter: 'claude-sonnet-5-5', analyst: 'claude-sonnet-5-5', oracle: 'claude-fable-5-1' });
+  assert.equal(modelLabel('claude-opus-5-5'), 'Opus 5.5');
+  assert.equal(depthText('auto', models, true), '$(layers) Auto · Specter: Sonnet 5.5');
+  assert.equal(depthText('specter', models, false), '$(layers) Specter only · models off');
+  assert.deepEqual(DEPTHS.map(comingIn), [undefined, undefined, 'coming in 0.2', 'coming in 0.3']);
 });

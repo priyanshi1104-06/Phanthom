@@ -78,6 +78,19 @@ class BackendTest(unittest.TestCase):
         self.assertIn("python", health["languages"])
         self.assertIn("typescript", health["languages"]["typescript"]["vscode_ids"])
         self.assertIn("available", health["model"])
+        self.assertTrue(health["layers"]["specter"]["built"])
+        self.assertFalse(health["layers"]["oracle"]["built"])
+        self.assertIn("claude-opus-5-5", [m["id"] for m in health["model_choices"]])
+
+    def test_the_users_model_choice_reaches_the_model(self):
+        from runner import llm
+        provider = llm.ScriptedProvider([{"match": "Function: pick", "answer": {"risk": "low", "risk_reason": "", "hypotheses": []}}])
+        llm.set_provider(provider)
+        self.addCleanup(llm.set_provider, None)
+        source = "def pick(a: int) -> int:\n    return a\n"
+        self.client.post("/specter", json={"source": source, "models": {"specter": "claude-opus-5-5"}})
+        self.client.post("/specter", json={"source": source.replace("a\n", "a + 0\n"), "models": {"specter": "rm -rf"}})
+        self.assertEqual([c["settings"]["model"] for c in provider.calls], ["claude-opus-5-5", "claude-haiku-5-5"])
 
     def test_static(self):
         response = self.client.post("/static", json={"source": "def f():\n    return nope\n"}).json()

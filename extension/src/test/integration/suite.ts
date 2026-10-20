@@ -28,6 +28,10 @@ export async function run(): Promise<void> {
   await vscode.workspace.getConfiguration('phantom').update(
     'backendUrl', process.env.PHANTOM_TEST_BACKEND, vscode.ConfigurationTarget.Global);
   await vscode.workspace.getConfiguration('phantom').update('useModel', false, vscode.ConfigurationTarget.Global);
+  if (process.env.PHANTOM_TEST_PYTHON) {  // the packaged extension starts its own backend with this Python
+    await vscode.workspace.getConfiguration('phantom').update(
+      'pythonPath', process.env.PHANTOM_TEST_PYTHON, vscode.ConfigurationTarget.Global);
+  }
 
   // 1. Open the Python samples: every bug Specter reproduces shows up as a red squiggle.
   const uri = vscode.Uri.file(path.join(process.env.PHANTOM_REPO!, 'samples', 'buggy.py'));
