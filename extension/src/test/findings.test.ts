@@ -95,7 +95,7 @@ test('depth and tier pickers never name a model or supplier', () => {
 });
 
 test('the panel talks about the file and says how each bug was found', () => {
-  const view = panelView('samples/buggy.js', { findings });
+  const view = panelView('samples/crashes.js', { findings });
   assert.equal(view.message, 'I checked 7 functions. 3 inputs the types allow make the code fail; 1 more fails under an assumption; 1 only when handed null.');
   assert.equal(view.cards[0].severity, 'error');
   assert.equal(view.cards[0].how, "Found by Phantom's boundary inputs, proven by replaying it in a fresh sandbox.");

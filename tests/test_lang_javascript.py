@@ -149,7 +149,7 @@ class SandboxTest(unittest.TestCase):
         self.addCleanup(llm.set_provider, None)
 
     def test_javascript_samples(self):
-        found = bugs(specter.run((SAMPLES / "javascript" / "buggy.js").read_text(), "javascript", use_model=False))
+        found = bugs(specter.run((SAMPLES / "javascript" / "crashes.js").read_text(), "javascript", use_model=False))
         expected = {"average": ("TypeError", 8), "firstWord": ("TypeError", 15), "lastPrice": ("TypeError", 21),
                     "padLabel": ("RangeError", 26), "parsePort": ("TypeError", 32), "collatzSteps": ("Timeout", 36),
                     "factorial": ("RangeError", 47)}  # declared by JSDoc types: errors
@@ -162,7 +162,7 @@ class SandboxTest(unittest.TestCase):
         self.assertLessEqual(severities, {"info"})  # at most "crashes on null"
 
     def test_typescript_samples(self):
-        found = bugs(specter.run((SAMPLES / "typescript" / "buggy.ts").read_text(), "typescript", use_model=False))
+        found = bugs(specter.run((SAMPLES / "typescript" / "crashes.ts").read_text(), "typescript", use_model=False))
         expected = {"average": "TypeError", "findIndex": "ReturnTypeError", "initials": "TypeError",
                     "chunk": "Timeout", "topScore": "TypeError", "formatPrice": "RangeError", "shout": "TypeError"}
         for name, error in expected.items():
@@ -173,7 +173,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual([f["status"] for f in correct["findings"]], ["no_bug_found"] * 4)
 
     def test_replay(self):
-        source = (SAMPLES / "javascript" / "buggy.js").read_text()
+        source = (SAMPLES / "javascript" / "crashes.js").read_text()
         result = specter.replay(source, "javascript", "average", {"exprs": ["[]"]})
         self.assertEqual((result["ok"], result["error"], result["line"]), (False, "TypeError", 8))
         fixed = specter.replay(source, "javascript", "average", {"exprs": ["[2, 4]"]})

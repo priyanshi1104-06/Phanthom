@@ -6,7 +6,7 @@ import java.util.Map;
 
 // Each static method has one bug that a boundary input finds, except isLeapYear: its bug is a wrong
 // answer, not a crash, so finding it needs an intent check (the Analyst layer), not Specter.
-public class Buggy {
+public class Crashes {
     public static int average(int[] values) {
         int sum = 0;
         for (int value : values) {

@@ -104,7 +104,7 @@ record Point(int x) { static Point origin() { return new Point(0); } }
     def test_trace_line_skips_the_harness_and_the_jdk(self):
         trace = ("java.lang.NumberFormatException: For input string: \"\"\n"
                  "\tat java.base/java.lang.Integer.parseInt(Integer.java:672)\n"
-                 "\tat Buggy.parsePort(Buggy.java:36)\n\tat PhantomHarness.call(PhantomHarness.java:30)\n")
+                 "\tat Crashes.parsePort(Crashes.java:36)\n\tat PhantomHarness.call(PhantomHarness.java:30)\n")
         self.assertEqual(JAVA.trace_line(trace), 36)
         self.assertIsNone(JAVA.trace_line("\tat PhantomHarness.main(PhantomHarness.java:12)\n"))
 
@@ -260,7 +260,7 @@ class SandboxTest(unittest.TestCase):
         specter.cache = specter.Cache()  # fresh runs, not results remembered from another test
 
     def test_buggy_sample(self):
-        answer = specter.run((SAMPLES / "Buggy.java").read_text(), "java", use_model=False)
+        answer = specter.run((SAMPLES / "Crashes.java").read_text(), "java", use_model=False)
         found = bugs(answer)
         expected = {"average": ("ArithmeticException", 15), "pairwiseDiffs": ("ArrayIndexOutOfBoundsException", 21),
                     "initials": ("StringIndexOutOfBoundsException", 29), "parsePort": ("NumberFormatException", 36),
@@ -269,13 +269,13 @@ class SandboxTest(unittest.TestCase):
                     "percent": ("ArithmeticException", 65)}  # private: called through reflection
         for name, (error, line) in expected.items():
             with self.subTest(function=name):
-                self.assertIn((error, line, "error"), found[f"Buggy.{name}"])
-        self.assertNotIn("Buggy.isLeapYear", found)  # a wrong answer: needs an intent check
+                self.assertIn((error, line, "error"), found[f"Crashes.{name}"])
+        self.assertNotIn("Crashes.isLeapYear", found)  # a wrong answer: needs an intent check
         statuses = {f["function"]: f for f in answer["findings"] if f["status"] != "bug"}
-        self.assertEqual(statuses["Buggy.main"]["status"], "skipped")
-        hang = next(f for f in answer["findings"] if f["function"] == "Buggy.collatzSteps")
+        self.assertEqual(statuses["Crashes.main"]["status"], "skipped")
+        hang = next(f for f in answer["findings"] if f["function"] == "Crashes.collatzSteps")
         self.assertEqual(hang["failure"]["kind"], "timeout")
-        self.assertEqual(set(found["Buggy.average"]) - {("ArithmeticException", 15, "error")},
+        self.assertEqual(set(found["Crashes.average"]) - {("ArithmeticException", 15, "error")},
                          {("NullPointerException", 12, "info")})  # null only as an assumption
 
     def test_correct_sample_has_no_findings(self):
@@ -283,12 +283,12 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual([f["status"] for f in answer["findings"]], ["no_bug_found"] * 4)
 
     def test_replay(self):
-        source = (SAMPLES / "Buggy.java").read_text()
-        result = specter.replay(source, "java", "Buggy.average", {"exprs": ["new int[]{}"]})
+        source = (SAMPLES / "Crashes.java").read_text()
+        result = specter.replay(source, "java", "Crashes.average", {"exprs": ["new int[]{}"]})
         self.assertEqual((result["ok"], result["error"], result["line"]), (False, "ArithmeticException", 15))
-        self.assertEqual(specter.replay(source, "java", "Buggy.average", {"exprs": ["new int[]{2, 4}"]}),
+        self.assertEqual(specter.replay(source, "java", "Crashes.average", {"exprs": ["new int[]{2, 4}"]}),
                          {"ok": True, "result": "3"})
-        broken = specter.replay(source, "java", "Buggy.spread", {"exprs": ["List.of(null)"]})
+        broken = specter.replay(source, "java", "Crashes.spread", {"exprs": ["List.of(null)"]})
         self.assertEqual(broken["kind"], "not_entered")  # the input itself threw: not the method's bug
 
     def test_model_inputs_find_what_edges_miss_and_bad_ones_are_dropped(self):

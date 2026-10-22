@@ -75,12 +75,12 @@ export async function run(): Promise<void> {
   assert.match(hints[0].message, /undefined name 'nope'/);
 
   // 5. Another language: JavaScript. Red for inputs any caller could pass, faint hints for "fails on null".
-  const js = vscode.Uri.file(path.join(process.env.PHANTOM_REPO!, 'samples', 'javascript', 'buggy.js'));
+  const js = vscode.Uri.file(path.join(process.env.PHANTOM_REPO!, 'samples', 'javascript', 'crashes.js'));
   await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(js));
   const jsBugs = await waitFor('JavaScript bugs', () => confirmed(js),
     (d) => hasAll(d.map((x) => x.message), ['average', 'firstWord', 'lastPrice', 'padLabel', 'parsePort', 'collatzSteps', 'factorial']));
   assert.equal(jsBugs.find((d) => d.message.includes('average([])'))!.range.start.line, 7);
-  if (process.env.PHANTOM_TEST_SCREENSHOT) {  // for the docs: the Phantom panel next to buggy.js
+  if (process.env.PHANTOM_TEST_SCREENSHOT) {  // for the docs: the Phantom panel next to crashes.js
     await vscode.commands.executeCommand('workbench.view.extension.phantom');
     await sleep(4000);
     require('node:child_process').execFileSync('import', ['-window', 'root', process.env.PHANTOM_TEST_SCREENSHOT]);

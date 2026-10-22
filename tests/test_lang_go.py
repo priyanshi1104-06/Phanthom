@@ -276,7 +276,7 @@ class SandboxTest(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def test_buggy_sample(self):
-        found = bugs(specter.run((SAMPLES / "buggy.go").read_text(), "go", use_model=False))
+        found = bugs(specter.run((SAMPLES / "crashes.go").read_text(), "go", use_model=False))
         expected = {"Average": ("integer divide by zero", 20, "error"),
                     "FirstWord": ("index out of range", 24, "error"),
                     "LastPrice": ("index out of range", 29, "error"),
@@ -297,7 +297,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual([f["status"] for f in correct["findings"]], ["no_bug_found"] * 4)
 
     def test_replay_and_error_results(self):
-        source = (SAMPLES / "buggy.go").read_text()
+        source = (SAMPLES / "crashes.go").read_text()
         result = specter.replay(source, "go", "Average", {"exprs": ["[]int{}"]})
         self.assertEqual((result["ok"], result["error"], result["line"]), (False, "integer divide by zero", 20))
         self.assertIn("main.go:20", result["traceback"])

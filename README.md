@@ -96,13 +96,13 @@ Settings: `phantom.enabled`, `phantom.backendUrl`, `phantom.debounceMs` (700), `
 
 ```bash
 python phantom.py samples/crashes.py             # any supported file; the extension picks the language
-python phantom.py samples/go/buggy.go -f Average # one function
-python phantom.py samples/javascript/buggy.js --json --no-model
+python phantom.py samples/go/crashes.go -f Average # one function
+python phantom.py samples/javascript/crashes.js --json --no-model
 python phantom.py samples/intent/intent.py --analyst   # also wrong answers (the Analyst)
 ```
 
 ```
-samples/javascript/buggy.js  (javascript, runs in: Docker sandbox, risk: low)
+samples/javascript/crashes.js  (javascript, runs in: Docker sandbox, risk: low)
 
   BUG  average       line 5: TypeError: Reduce of empty array with no initial value
                      repro: average([])   (reproduced in a fresh sandbox; boundary input)

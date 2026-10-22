@@ -1,8 +1,8 @@
 """Phantom from the command line: Specter (and Analyst) on any supported file, and sandbox setup.
 
     python phantom.py samples/crashes.py             # every function in the file (language from the extension)
-    python phantom.py samples/js/buggy.js -f average # just one function
-    python phantom.py samples/go/buggy.go --json     # findings as JSON (the repro format)
+    python phantom.py samples/javascript/crashes.js -f average # just one function
+    python phantom.py samples/go/crashes.go --json   # findings as JSON (the repro format)
     python phantom.py samples/intent/intent.py --analyst  # also Analyst: wrong answers, not just crashes
     python phantom.py setup                          # pull/build the sandbox image of every language
     python phantom.py setup go rust                  # just these

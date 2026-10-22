@@ -309,7 +309,7 @@ class SandboxTest(unittest.TestCase):
         self.addCleanup(llm.set_provider, None)
 
     def test_c_samples(self):
-        answer = specter.run((SAMPLES / "c" / "buggy.c").read_text(), "c", use_model=False)
+        answer = specter.run((SAMPLES / "c" / "crashes.c").read_text(), "c", use_model=False)
         found = bugs(answer)
         expected = {"average": ("division by zero", 10, "error"),
                     "last_element": ("heap-buffer-overflow", 14, "error"),
@@ -331,7 +331,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual([f["status"] for f in correct["findings"]], ["no_bug_found"] * 4)
 
     def test_cpp_samples(self):
-        found = bugs(specter.run((SAMPLES / "cpp" / "buggy.cpp").read_text(), "cpp", use_model=False))
+        found = bugs(specter.run((SAMPLES / "cpp" / "crashes.cpp").read_text(), "cpp", use_model=False))
         expected = {"average": ("division by zero", 12, "error"),
                     "top_score": ("null pointer dereference", 16, "error"),
                     "port_of": ("std::invalid_argument", 21, "error"),
@@ -349,12 +349,12 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual([f["status"] for f in correct["findings"]], ["no_bug_found"] * 4)
 
     def test_replay(self):
-        source = (SAMPLES / "c" / "buggy.c").read_text()
+        source = (SAMPLES / "c" / "crashes.c").read_text()
         result = specter.replay(source, "c", "average", {"exprs": ["(int[]){}", "0"]})
         self.assertEqual((result["ok"], result["error"], result["line"]), (False, "division by zero", 10))
         self.assertEqual(specter.replay(source, "c", "average", {"exprs": ["(int[]){2, 4}", "2"]}),
                          {"ok": True, "result": "3"})
-        source = (SAMPLES / "cpp" / "buggy.cpp").read_text()
+        source = (SAMPLES / "cpp" / "crashes.cpp").read_text()
         result = specter.replay(source, "cpp", "price_of", {"exprs": ['"kiwi"']})
         self.assertEqual((result["error"], result["message"], result["line"]), ("std::out_of_range", "map::at", 44))
         self.assertEqual(specter.replay(source, "cpp", "price_of", {"exprs": ['"pear"']}), {"ok": True, "result": "75"})

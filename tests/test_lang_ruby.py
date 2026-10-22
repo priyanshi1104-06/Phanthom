@@ -232,7 +232,7 @@ class SandboxTest(unittest.TestCase):
         self.addCleanup(llm.set_provider, None)
 
     def test_samples(self):
-        answer = specter.run((SAMPLES / "buggy.rb").read_text(), "ruby", use_model=False)
+        answer = specter.run((SAMPLES / "crashes.rb").read_text(), "ruby", use_model=False)
         found = bugs(answer)
         expected = {"average": ("ZeroDivisionError", 10), "median": ("IndexError", 16),
                     "month_number": ("KeyError", 25), "badge": ("TypeError", 30), "percent": ("FloatDomainError", 36),
@@ -251,7 +251,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual([f["status"] for f in correct["findings"]], ["no_bug_found"] * 4)
 
     def test_replay(self):
-        source = (SAMPLES / "buggy.rb").read_text()
+        source = (SAMPLES / "crashes.rb").read_text()
         result = specter.replay(source, "ruby", "average", {"exprs": ["[]"]})
         self.assertEqual((result["ok"], result["error"], result["line"]), (False, "ZeroDivisionError", 10))
         self.assertEqual(specter.replay(source, "ruby", "average", {"exprs": ["[2, 4]"]}), {"ok": True, "result": "3"})

@@ -101,7 +101,7 @@ class ParsingTest(unittest.TestCase):
 
     def test_half_typed_code_has_errors(self):
         self.assertTrue(PHP.has_errors("<?php\nfunction f(int $x { return $x; }\n"))
-        self.assertFalse(PHP.has_errors((SAMPLES / "buggy.php").read_text()))
+        self.assertFalse(PHP.has_errors((SAMPLES / "crashes.php").read_text()))
 
 
 class LiteralTest(unittest.TestCase):
@@ -189,7 +189,7 @@ class SandboxTest(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def test_buggy_sample(self):
-        answer = specter.run((SAMPLES / "buggy.php").read_text(), "php", use_model=False)
+        answer = specter.run((SAMPLES / "crashes.php").read_text(), "php", use_model=False)
         found = bugs(answer)
         expected = {"average": ("DivisionByZeroError", 9), "split_bill": ("DivisionByZeroError", 14),
                     "display_name": ("ErrorException", 20), "parse_port": ("ErrorException", 25),
@@ -211,7 +211,7 @@ class SandboxTest(unittest.TestCase):
                           ("App\\Util\\percent", "no_bug_found"), ("App\\Util\\Money::format", "no_bug_found")])
 
     def test_replay(self):
-        source = (SAMPLES / "buggy.php").read_text()
+        source = (SAMPLES / "crashes.php").read_text()
         result = specter.replay(source, "php", "average", {"exprs": ["[]"]})
         self.assertEqual((result["ok"], result["error"], result["line"]), (False, "DivisionByZeroError", 9))
         self.assertEqual(specter.replay(source, "php", "average", {"exprs": ["[2, 4]"]}), {"ok": True, "result": "3.0"})

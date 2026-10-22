@@ -193,7 +193,7 @@ class SandboxTest(unittest.TestCase):
             setattr(specter, name, specter.Cache())
 
     def test_buggy_sample(self):
-        answer = specter.run((SAMPLES / "buggy.rs").read_text(), "rust", use_model=False)
+        answer = specter.run((SAMPLES / "crashes.rs").read_text(), "rust", use_model=False)
         found = bugs(answer)
         expected = {"average": ("attempt to divide by zero", 10), "pairwise_diffs": ("index out of bounds", 17),
                     "largest": ("called `Option::unwrap()` on a `None` value", 24),
@@ -214,7 +214,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual([f["status"] for f in answer["findings"]], ["no_bug_found"] * 4)
 
     def test_replay(self):
-        source = (SAMPLES / "buggy.rs").read_text()
+        source = (SAMPLES / "crashes.rs").read_text()
         result = specter.replay(source, "rust", "average", {"exprs": ["&[]"]})
         self.assertEqual((result["ok"], result["error"], result["line"]), (False, "attempt to divide by zero", 10))
         self.assertIn("user.rs:10", result["traceback"])
