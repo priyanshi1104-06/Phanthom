@@ -40,6 +40,7 @@ interface SpecterAnswer {
   sandbox?: string;
   setup?: string;
   risk?: Risk;
+  model?: { available?: boolean };
   findings: Finding[];
 }
 
@@ -373,6 +374,9 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
         '/specter', { ...body, model: this.config().useModel, models: this.config().tiers }, controller.signal);
       if (stale() || !answer.parsed) {
         return;
+      }
+      if (answer.model) {  // the AI can fail after start-up (a key that is refused): keep the status bar honest
+        this.hasModels = !!answer.model.available;
       }
       state.sandbox = answer.sandbox;
       state.setup = answer.setup;

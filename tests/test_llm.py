@@ -74,6 +74,18 @@ class AnthropicProviderTest(unittest.TestCase):
         self.assertEqual(self.server.requests, [])
 
 
+class NoKeyTest(unittest.TestCase):
+    def tearDown(self):
+        llm.set_provider(None)
+
+    def test_without_a_key_models_are_unavailable_from_the_start(self):
+        with mock.patch.dict(os.environ, {"PHANTOM_MODEL_PROVIDER": "anthropic"}, clear=True):
+            llm.set_provider(None)
+            status = llm.status()
+        self.assertFalse(status["available"])
+        self.assertIn("no AI key", status["detail"])
+
+
 class ScriptedAndSettingsTest(unittest.TestCase):
     def tearDown(self):
         llm.set_provider(None)

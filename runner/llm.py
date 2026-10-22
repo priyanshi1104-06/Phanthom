@@ -140,6 +140,13 @@ def _make_provider(name):
         except Exception as exc:  # the SDK isn't installed, or no credentials at all
             _status.update(provider="anthropic", available=False, detail=f"Anthropic API not available: {exc}")
             return None
+        client = created.client
+        if not (client.api_key or client.auth_token or getattr(client, "credentials", None)):
+            # without this the status says "ready" until the first request fails, so the editor shows AI tiers
+            # while only Phantom's engine runs
+            _status.update(provider="anthropic", available=False, detail="no AI key: Phantom's engine only "
+                           "(\"Phantom: Set AI Key\", or ANTHROPIC_API_KEY in .env)")
+            return None
         _status.update(provider="anthropic", available=True, detail="ready")
         return created
     raise ValueError(f"unknown PHANTOM_MODEL_PROVIDER {name!r} (anthropic, scripted or none)")
