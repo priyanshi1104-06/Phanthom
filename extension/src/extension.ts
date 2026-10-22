@@ -26,7 +26,8 @@ interface FileState {
   specterFindings?: Finding[];
   analystFindings: Finding[];  // kept between Analyst runs, minus functions edited since
   analysing?: boolean;
-  saved?: boolean;  // saved since the last run: in Auto, Analyst looks
+  saved?: boolean;  // saved (or "Check intent" asked) since the last run: in Auto, Analyst looks
+  analystDone?: boolean;  // Analyst has looked at this file since it was opened
   risk?: Risk;
   sandbox?: string;
   setup?: string;
@@ -84,6 +85,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private running = 0;
   private offline = false;
+  private warnedOldBackend = false;
 
   readonly onDidChangeCodeLenses = this.lensesChanged.event;
 
@@ -115,6 +117,13 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
           this.restart();
         }
       }),
+      vscode.commands.registerCommand('phantom.checkIntent', () => {
+        const doc = vscode.window.activeTextEditor?.document;
+        if (doc && this.supported(doc)) {
+          this.state(doc).saved = true;
+          this.schedule(doc, 0);
+        }
+      }),
       vscode.commands.registerCommand('phantom.analyze', () => {
         const doc = vscode.window.activeTextEditor?.document;
         if (doc) {
@@ -131,9 +140,13 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
   /** After the backend (re)started: learn whether models can be used, then analyse open files again. */
   private async afterStart(): Promise<void> {
     try {
-      const health = await (await fetch(this.config().backendUrl + '/health')).json() as { model?: { available?: boolean } };
+      const health = await (await fetch(this.config().backendUrl + '/health')).json() as {
+        model?: { available?: boolean }; layers?: Record<string, { built?: boolean }> };
       this.hasModels = !!health.model?.available;
       this.offline = false;
+      if (!health.layers?.analyst?.built) {
+        this.warnOldBackend();
+      }
     } catch {
       this.hasModels = false;
     }
@@ -205,6 +218,9 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     }
     if (action.type === 'setUp') {
       return void vscode.commands.executeCommand('phantom.setUp');
+    }
+    if (action.type === 'checkIntent') {
+      return void vscode.commands.executeCommand('phantom.checkIntent');
     }
     const editor = vscode.window.activeTextEditor;
     const state = editor ? this.files.get(editor.document.uri.toString()) : undefined;
@@ -369,9 +385,9 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
       this.log(`${vscode.workspace.asRelativePath(doc.uri)}: ${errors} confirmed, ` +
         `${state.bugs.filter((b) => !isWrongResult(b)).length - errors} under an assumption` +
         (answer.setup ? ` (no ${doc.languageId} sandbox yet: run  ${answer.setup})` : ''));
-      const saved = !!state.saved;
+      const prompted = !!state.saved || !state.analystDone;  // saved, asked for, or opened
       state.saved = false;
-      if (!answer.setup && wantsAnalyst(this.config().depth, state.risk, saved)) {
+      if (!answer.setup && wantsAnalyst(this.config().depth, state.risk, prompted)) {
         await this.analyst(doc, state, body, stale, controller.signal);
       }
     } catch (error) {
@@ -413,6 +429,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
         if (stale() || !answer.parsed) {
           return;
         }
+        state.analystDone = true;
         state.analystFindings = answer.findings;
         this.show(doc, state);
         const wrong = confirmedBugs(answer.findings).length;
@@ -422,10 +439,32 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
           return;
         }
       }
+    } catch (error) {  // Specter's results stay; the Analyst's failure is said, not retried in a loop
+      if (signal.aborted) {
+        return;
+      }
+      state.analystDone = true;
+      this.log(`Analyst failed: ${error}`);
+      if (/HTTP 404/.test(String(error))) {
+        this.warnOldBackend();
+      }
     } finally {
       state.analysing = false;
       this.updateStatus();
     }
+  }
+
+  /** The backend answering is an older Phantom without the Analyst (e.g. one still running from 0.1). */
+  private warnOldBackend(): void {
+    if (this.warnedOldBackend) {
+      return;
+    }
+    this.warnedOldBackend = true;
+    this.log(`The backend at ${this.config().backendUrl} is an older Phantom without the Analyst.`);
+    void vscode.window.showWarningMessage(
+      'Phantom: an older Phantom backend is still running, so the Analyst can\'t run. Close VS Code completely ' +
+      '(every window) and open it again, or stop any terminal running "python -m backend".', 'Show log')
+      .then((choice) => choice && this.output.show(true));
   }
 
   /** Log once per edit that needs a deeper layer. */

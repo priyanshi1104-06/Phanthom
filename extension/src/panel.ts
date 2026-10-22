@@ -5,7 +5,7 @@
 import * as vscode from 'vscode';
 import { PanelView } from './findings';
 
-export type PanelAction = { type: 'reveal' | 'replay'; index: number } | { type: 'depth' | 'setUp' };
+export type PanelAction = { type: 'reveal' | 'replay'; index: number } | { type: 'depth' | 'setUp' | 'checkIntent' };
 
 export class PhantomPanel implements vscode.WebviewViewProvider, vscode.Disposable {
   static readonly id = 'phantom.panel';
@@ -23,7 +23,7 @@ export class PhantomPanel implements vscode.WebviewViewProvider, vscode.Disposab
     this.view = view;
     view.webview.options = { enableScripts: true, enableCommandUris: false };
     this.listeners.push(view.webview.onDidReceiveMessage((message: PanelAction) => {
-      if (message && ['reveal', 'replay', 'depth', 'setUp'].includes(message.type)) {
+      if (message && ['reveal', 'replay', 'depth', 'setUp', 'checkIntent'].includes(message.type)) {
         this.onAction(message);
       }
     }));
@@ -82,7 +82,8 @@ export class PhantomPanel implements vscode.WebviewViewProvider, vscode.Disposab
     <a data-type="depth" title="Choose the depth and the tier of each layer">${esc(depth)} · ${esc(models)}</a></div>
   <div class="bubble"><div class="who">Phantom</div>${esc(view.message)}
     ${view.risk ? `<div class="risk">This edit: ${esc(view.risk)}</div>` : ''}
-    ${/Set Up/.test(view.message) ? '<div class="buttons"><button data-type="setUp">Set Up</button></div>' : ''}</div>
+    <div class="buttons">${/Set Up/.test(view.message) ? '<button data-type="setUp">Set Up</button>' : ''}
+      <button data-type="checkIntent" title="Run the Analyst on this file now: wrong answers, not just crashes">Check intent</button></div></div>
   ${cards}
 <script nonce="${nonce}">
   const vscode = acquireVsCodeApi();

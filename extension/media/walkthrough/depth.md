@@ -6,7 +6,8 @@
 | **Analyst** | checks intent: wrong answers that don't crash, callers an edit breaks | now |
 | **Oracle** | writes tests, explores deeply, proves fixes | 0.3 |
 
-**Auto** runs Specter always and the Analyst when you save, or when an edit is risky (payments, auth,
+**Auto** runs Specter always and the Analyst when you open or save a file (or click **Check intent** in the
+Phantom panel), or when an edit is risky (payments, auth,
 concurrency, migrations). **Up to Analyst** runs both on every pause. Each layer has a tier, from **Swift** to
 **Deepest**: deeper thinks harder and takes longer.
 

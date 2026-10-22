@@ -36,7 +36,8 @@ replayed in a fresh sandbox and reported only if it returns the same wrong value
 functions it calls, transitively, and the rest of the file). Edit `double()` and the examples of
 `quadruple()`, which calls it, run again: the break shows up on the caller.
 
-In VS Code, depth **Auto** runs the Analyst when you save or when an edit is risky; **Up to Analyst** runs it
+In VS Code, depth **Auto** runs the Analyst when you open or save a file, when you click **Check intent** in
+the Phantom panel, or when an edit is risky; **Up to Analyst** runs it
 on every pause. Its model reads 4 functions per run (the edited ones and their callers first); the rest follow.
 
 ## Languages

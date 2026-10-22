@@ -219,7 +219,7 @@ export const DEFAULT_TIERS: Record<Layer, string> = { specter: 'swift', analyst:
 
 export interface Depth { id: 'auto' | Layer; label: string; detail: string; needs: Layer[] }
 export const DEPTHS: Depth[] = [
-  { id: 'auto', label: 'Auto', detail: 'Specter always; Analyst when you save, or when an edit is risky', needs: ['specter'] },
+  { id: 'auto', label: 'Auto', detail: 'Specter always; Analyst when you open or save a file, or an edit is risky', needs: ['specter'] },
   { id: 'specter', label: 'Specter only', detail: 'fast checks on every pause in typing', needs: ['specter'] },
   { id: 'analyst', label: 'Up to Analyst', detail: 'Analyst on every pause too: wrong answers, broken callers', needs: ['analyst'] },
   { id: 'oracle', label: 'Up to Oracle', detail: 'the deepest: writes tests, proves fixes', needs: ['oracle'] },
@@ -249,13 +249,14 @@ export function depthText(depthId: string, tiers: Record<Layer, string>, hasMode
   return `$(layers) ${depth.label} · ${hasModels ? models : 'engine only'}`;
 }
 
-/** Does Analyst run after this Specter run? Auto: when the file was just saved, or the edit is risky. */
-export function wantsAnalyst(depthId: string, risk: Risk | undefined, saved: boolean): boolean {
+/** Does Analyst run after this Specter run? Auto: when prompted (the file was just opened or saved, or the
+ * user asked for it), or when the edit is risky. */
+export function wantsAnalyst(depthId: string, risk: Risk | undefined, prompted: boolean): boolean {
   if (depthId === 'specter') {
     return false;
   }
   if (depthId === 'auto') {
-    return saved || !!risk?.escalate;
+    return prompted || !!risk?.escalate;
   }
   return true;
 }

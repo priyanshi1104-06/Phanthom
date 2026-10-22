@@ -145,7 +145,7 @@ test('when Analyst runs', () => {
   const risky: Risk = { level: 'medium', edit_level: 'medium', changed: ['q'], escalate: 'analyst', reasons: [] };
   assert.equal(wantsAnalyst('specter', risky, true), false);
   assert.equal(wantsAnalyst('auto', undefined, false), false);
-  assert.equal(wantsAnalyst('auto', undefined, true), true);  // on save
+  assert.equal(wantsAnalyst('auto', undefined, true), true);  // opened, saved or asked for
   assert.equal(wantsAnalyst('auto', risky, false), true);
   assert.equal(wantsAnalyst('analyst', undefined, false), true);
 });

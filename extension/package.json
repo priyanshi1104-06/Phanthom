@@ -2,7 +2,7 @@
   "name": "phantom",
   "displayName": "Phantom",
   "description": "Finds bugs while you type, in Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby and PHP: crashes and wrong answers, each backed by an input reproduced in a sandbox.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "phantom",
   "license": "UNLICENSED",
   "private": true,
@@ -64,6 +64,10 @@
       {
         "command": "phantom.welcome",
         "title": "Phantom: Welcome"
+      },
+      {
+        "command": "phantom.checkIntent",
+        "title": "Phantom: Check Intent Now (Analyst)"
       }
     ],
     "configuration": {
@@ -105,7 +109,7 @@
             "oracle"
           ],
           "enumDescriptions": [
-            "Specter always; the Analyst when you save, or when an edit is risky",
+            "Specter always; the Analyst when you open or save a file, or when an edit is risky",
             "Specter only",
             "The Analyst too, on every pause: wrong answers and broken callers",
             "Up to the Oracle (coming in 0.3)"
