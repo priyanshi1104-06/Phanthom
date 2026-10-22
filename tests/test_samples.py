@@ -22,7 +22,7 @@ EXPECTED = {  # function -> error of its confirmed repro
 
 class SamplesTest(unittest.TestCase):
     def test_buggy_samples(self):
-        findings = {f["function"]: f for f in analyze_source((SAMPLES / "buggy.py").read_text())}
+        findings = {f["function"]: f for f in analyze_source((SAMPLES / "crashes.py").read_text())}
         self.assertEqual(len(findings), 10)
         for name, error in EXPECTED.items():
             with self.subTest(function=name):

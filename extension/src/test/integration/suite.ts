@@ -34,7 +34,7 @@ export async function run(): Promise<void> {
   }
 
   // 1. Open the Python samples: every bug Specter reproduces shows up as a red squiggle.
-  const uri = vscode.Uri.file(path.join(process.env.PHANTOM_REPO!, 'samples', 'buggy.py'));
+  const uri = vscode.Uri.file(path.join(process.env.PHANTOM_REPO!, 'samples', 'crashes.py'));
   const doc = await vscode.workspace.openTextDocument(uri);
   await vscode.window.showTextDocument(doc);
   const bugs = await waitFor('9 functions with confirmed bugs', () => confirmed(uri),

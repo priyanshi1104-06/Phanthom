@@ -95,7 +95,7 @@ Settings: `phantom.enabled`, `phantom.backendUrl`, `phantom.debounceMs` (700), `
 ## From the command line
 
 ```bash
-python phantom.py samples/buggy.py               # any supported file; the extension picks the language
+python phantom.py samples/crashes.py             # any supported file; the extension picks the language
 python phantom.py samples/go/buggy.go -f Average # one function
 python phantom.py samples/javascript/buggy.js --json --no-model
 python phantom.py samples/intent/intent.py --analyst   # also wrong answers (the Analyst)
