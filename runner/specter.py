@@ -94,6 +94,11 @@ class Cache:
                     del self.items[key]
             raise
 
+    def has(self, key):
+        """Is this key finished or running (so asking for it costs nothing new)?"""
+        with self.lock:
+            return key in self.items
+
 
 cache = Cache()
 model_cache = Cache(size=2000)

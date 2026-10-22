@@ -28,6 +28,7 @@ import re
 from dataclasses import dataclass, field
 
 RESULT_MARK = "@@PHANTOM "
+EXPECTED = "phantom_expected"  # Analyst's identity function (see Language.expected_function)
 MAX_INPUTS = 24  # candidate inputs per function and sandbox run
 MAX_EXPR = 400  # characters in one argument expression
 
@@ -182,6 +183,15 @@ class Language:
 
     def call_text(self, fn, args):
         return f"{fn.name}({', '.join(args)})"
+
+    # ---------- Analyst: an expected value, shown the way a result is shown ----------
+
+    def expected_function(self, fn):
+        """(source, name): an identity function that takes and returns fn's return type, written to be
+        appended to the user's file. Analyst passes an expected value through it, so the harness shows the
+        expected value exactly as it shows fn's results and the two can be compared as text. None when
+        that isn't possible here (no declared return type in a typed language, void, several results)."""
+        return None
 
     # ---------- running ----------
 

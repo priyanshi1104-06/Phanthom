@@ -21,7 +21,7 @@ assumption, and so does an index or count that doesn't fit the collection passed
 import ast
 import re
 
-from runner.languages.base import RESULT_MARK, Function, Language, Param
+from runner.languages.base import EXPECTED, RESULT_MARK, Function, Language, Param
 
 SIGNED = ("i8", "i16", "i32", "i64", "i128", "isize")
 UNSIGNED = ("u8", "u16", "u32", "u64", "u128", "usize")
@@ -394,6 +394,12 @@ class Rust(Language):
         for made in inputs:
             made.assumptions += [a for a in self._contract(fn, made.args) if a not in made.assumptions]
         return inputs
+
+    def expected_function(self, fn):
+        returns = (fn.returns or "").strip()
+        if not returns or returns == "()" or returns.startswith(("impl ", "!")):
+            return None
+        return f"\n\nfn {EXPECTED}(value: {returns}) -> {returns} {{ value }}\n", EXPECTED
 
     def model_input(self, fn, args, hypothesis):
         made = super().model_input(fn, args, hypothesis)

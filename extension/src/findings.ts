@@ -26,6 +26,17 @@ export interface Finding {
   input?: { call: string; exprs?: string[]; args?: unknown[] | null };
   failure?: Failure;
   reason?: string;
+  layer?: 'analyst' | string;  // absent: Specter
+  actual?: string;  // a wrong result: what the call returned, and what was expected instead
+  expected?: Expected;
+}
+
+/** Why Analyst expected another result: the code's own example, or the intent its AI read (quoted). */
+export interface Expected {
+  value: string;
+  basis: 'example' | 'docstring' | 'comment' | 'name' | 'caller' | 'type' | 'rule' | string;
+  quote: string;
+  why: string;
 }
 
 /** Phase 2 name, kept for older code. */
@@ -66,8 +77,26 @@ export function diagnosticLevel(bug: ConfirmedBug): 'error' | 'warning' | 'hint'
   return bug.severity === 'info' ? 'hint' : bug.severity;
 }
 
+/** Where Analyst's expected value comes from, in a few words. */
+export function expectedBecause(expected: Expected): string {
+  if (expected.basis === 'example') {
+    return `the code's own example says so: "${expected.quote}"`;
+  }
+  const where = { docstring: 'docstring', comment: 'comment', name: 'name', caller: 'callers', type: 'types',
+    rule: 'name' }[expected.basis] ?? 'code';
+  return `${expected.why || 'that is what it is meant to do'} (from its ${where}: "${expected.quote}")`;
+}
+
+export function isWrongResult(bug: Finding): boolean {
+  return bug.failure?.kind === 'wrong_result';
+}
+
 export function bugMessage(bug: ConfirmedBug): string {
   const { failure, input } = bug;
+  if (isWrongResult(bug) && bug.expected) {
+    return `Wrong result (reproduced): ${input.call} returned ${bug.actual}, expected ${bug.expected.value}: ` +
+      expectedBecause(bug.expected);
+  }
   const label = bug.severity === 'error'
     ? 'Confirmed bug (reproduced)'
     : `Fails if ${bug.assumptions.join(' and ')} (reproduced)`;
@@ -83,6 +112,9 @@ export function bugMessage(bug: ConfirmedBug): string {
 
 export function lensTitle(bug: ConfirmedBug): string {
   const icon = bug.severity === 'error' ? '$(bug)' : '$(warning)';
+  if (isWrongResult(bug)) {
+    return `${icon} Phantom: wrong result, expected ${bug.expected?.value ?? '?'}  ▶ Replay ${bug.input.call}`;
+  }
   const what = bug.severity === 'error' ? 'confirmed' : 'assumed';
   return `${icon} Phantom: ${what} ${bug.failure.error}  ▶ Replay ${bug.input.call}`;
 }
@@ -108,6 +140,9 @@ export interface ReplayResult {
 
 /** One-line verdict for a replay, plus details for the output panel. */
 export function describeReplay(call: string, result: ReplayResult): { summary: string; details: string } {
+  if (result.ok === false && result.kind === 'wrong_result') {
+    return { summary: `${call} still ${result.message}.`, details: '' };
+  }
   if (result.ok === true) {
     return {
       summary: `${call} returned ${typeof result.result === 'string' ? result.result : JSON.stringify(result.result)}: ` +
@@ -143,14 +178,19 @@ export function escalationReason(risk: Risk): string {
 }
 
 export function statusText(bugs: ConfirmedBug[], sandbox: string | undefined, risk?: Risk): string {
-  const errors = bugs.filter((b) => b.severity === 'error').length;
-  const warnings = bugs.filter((b) => b.severity === 'warning').length;
+  const crashes = bugs.filter((b) => !isWrongResult(b));
+  const errors = crashes.filter((b) => b.severity === 'error').length;
+  const warnings = crashes.filter((b) => b.severity === 'warning').length;
+  const wrong = bugs.length - crashes.length;
   const parts: string[] = [];
   if (errors) {
     parts.push(`${errors} confirmed`);
   }
   if (warnings) {
     parts.push(`${warnings} assumed`);
+  }
+  if (wrong) {
+    parts.push(`${wrong} wrong result${wrong === 1 ? '' : 's'}`);
   }
   const riskPart = riskText(risk);
   if (riskPart) {
@@ -159,7 +199,7 @@ export function statusText(bugs: ConfirmedBug[], sandbox: string | undefined, ri
   if (sandbox && sandbox !== 'docker') {
     parts.push('not sandboxed');
   }
-  const icon = errors ? '$(bug)' : warnings ? '$(warning)' : '$(check)';
+  const icon = errors ? '$(bug)' : warnings || wrong ? '$(warning)' : '$(check)';
   return `${icon} Phantom${parts.length ? ': ' + parts.join(' · ') : ''}`;
 }
 
@@ -167,7 +207,7 @@ export function statusText(bugs: ConfirmedBug[], sandbox: string | undefined, ri
 
 export type Layer = 'specter' | 'analyst' | 'oracle';
 export const LAYER_NAMES: Record<Layer, string> = { specter: 'Specter', analyst: 'Analyst', oracle: 'Oracle' };
-export const BUILT_LAYERS: Layer[] = ['specter'];  // the others arrive in updates of this same extension
+export const BUILT_LAYERS: Layer[] = ['specter', 'analyst'];  // Oracle arrives in an update of this same extension
 /** Phantom's tiers; which model sits behind each one is decided on the Phantom server. */
 export const TIERS = [
   { id: 'swift', label: 'Swift', detail: 'fastest' },
@@ -179,9 +219,9 @@ export const DEFAULT_TIERS: Record<Layer, string> = { specter: 'swift', analyst:
 
 export interface Depth { id: 'auto' | Layer; label: string; detail: string; needs: Layer[] }
 export const DEPTHS: Depth[] = [
-  { id: 'auto', label: 'Auto', detail: 'Specter always; deeper layers only when an edit is risky', needs: ['specter'] },
+  { id: 'auto', label: 'Auto', detail: 'Specter always; Analyst when you save, or when an edit is risky', needs: ['specter'] },
   { id: 'specter', label: 'Specter only', detail: 'fast checks on every pause in typing', needs: ['specter'] },
-  { id: 'analyst', label: 'Up to Analyst', detail: 'also checks intent: wrong answers, broken callers', needs: ['analyst'] },
+  { id: 'analyst', label: 'Up to Analyst', detail: 'Analyst on every pause too: wrong answers, broken callers', needs: ['analyst'] },
   { id: 'oracle', label: 'Up to Oracle', detail: 'the deepest: writes tests, proves fixes', needs: ['oracle'] },
 ];
 
@@ -201,10 +241,23 @@ export function chosenTiers(settings: Partial<Record<Layer, string>>): Record<La
   return { specter: pick('specter'), analyst: pick('analyst'), oracle: pick('oracle') };
 }
 
-/** The depth/tier status item: "$(layers) Auto · Specter Swift" (no AI: "engine only"). */
+/** The depth/tier status item: "$(layers) Auto · Swift / Balanced" (no AI: "engine only"). */
 export function depthText(depthId: string, tiers: Record<Layer, string>, hasModels: boolean): string {
   const depth = DEPTHS.find((d) => d.id === depthId) ?? DEPTHS[0];
-  return `$(layers) ${depth.label} · ${hasModels ? `Specter ${tierLabel(tiers.specter)}` : 'engine only'}`;
+  const models = depth.id === 'specter' ? tierLabel(tiers.specter)
+    : `${tierLabel(tiers.specter)} / ${tierLabel(tiers.analyst)}`;
+  return `$(layers) ${depth.label} · ${hasModels ? models : 'engine only'}`;
+}
+
+/** Does Analyst run after this Specter run? Auto: when the file was just saved, or the edit is risky. */
+export function wantsAnalyst(depthId: string, risk: Risk | undefined, saved: boolean): boolean {
+  if (depthId === 'specter') {
+    return false;
+  }
+  if (depthId === 'auto') {
+    return saved || !!risk?.escalate;
+  }
+  return true;
 }
 
 // ---------- the side panel: Phantom talking about the active file ----------
@@ -213,11 +266,13 @@ export const ORIGINS: Record<string, string> = {
   edge: "Found by Phantom's boundary inputs",
   fuzz: "Found by Phantom's fuzzer",
   model: "Suggested by Phantom's AI",
+  example: "Checked by Phantom's Analyst against the code's own example",
+  intent: "Expected by Phantom's Analyst from what the code is meant to do",
 };
 
 export interface PanelCard {
   index: number; function: string; call: string; line: number | null; severity: 'error' | 'warning' | 'info';
-  headline: string; why: string; how: string; assumptions: string[];
+  headline: string; why: string; how: string; assumptions: string[]; because: string;
 }
 
 export interface PanelView { title: string; message: string; cards: PanelCard[]; risk: string }
@@ -226,7 +281,8 @@ const SEVERITY_HEADLINE = { error: 'Confirmed bug', warning: 'Fails under an ass
 
 /** What the panel says about one file: a sentence in Phantom's voice plus one card per reproduced failure. */
 export function panelView(file: string, state: {
-  findings?: Finding[]; running?: boolean; offline?: boolean; setup?: string; problem?: string; risk?: Risk;
+  findings?: Finding[]; running?: boolean; analysing?: boolean; offline?: boolean; setup?: string; problem?: string;
+  risk?: Risk;
 }): PanelView {
   const title = file || 'Phantom';
   const risk = riskText(state.risk);
@@ -241,17 +297,27 @@ export function panelView(file: string, state: {
   }
   const bugs = confirmedBugs(state.findings);
   const functions = new Set(state.findings.map((f) => f.function)).size;
-  const errors = bugs.filter((b) => b.severity === 'error').length;
-  const assumed = bugs.filter((b) => b.severity === 'warning').length;
-  const nulls = bugs.filter((b) => b.severity === 'info').length;
+  const crashes = bugs.filter((b) => !isWrongResult(b));
+  const errors = crashes.filter((b) => b.severity === 'error').length;
+  const assumed = crashes.filter((b) => b.severity === 'warning').length;
+  const nulls = crashes.filter((b) => b.severity === 'info').length;
+  const wrong = bugs.length - crashes.length;
   const cards = bugs
-    .map((bug, index) => ({
+    .map((bug, index) => isWrongResult(bug) && bug.expected ? {
+      index, function: bug.function, call: bug.input.call, line: bug.failure.line, severity: bug.severity,
+      headline: 'Wrong result',
+      why: `Returned ${bug.actual}, expected ${bug.expected.value}.`,
+      how: `${ORIGINS[bug.origin ?? 'intent'] ?? ORIGINS.intent}; the wrong result was replayed in a fresh sandbox.`,
+      assumptions: bug.assumptions,
+      because: capitalize(expectedBecause(bug.expected)),
+    } : {
       index, function: bug.function, call: bug.input.call, line: bug.failure.line, severity: bug.severity,
       headline: SEVERITY_HEADLINE[bug.severity],
       why: capitalize(bugMessage(bug).replace(/^[^:]*\(reproduced\)[.:]\s*/, '').replace(bug.input.call + ' ', '')),
       how: `${ORIGINS[bug.origin ?? 'edge'] ?? ORIGINS.edge}, proven by replaying it in a fresh sandbox.`,
       assumptions: bug.assumptions,
-    }))
+      because: '',
+    })
     .sort((a, b) => ['error', 'warning', 'info'].indexOf(a.severity) - ['error', 'warning', 'info'].indexOf(b.severity));
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
   let message: string;
@@ -261,11 +327,14 @@ export function panelView(file: string, state: {
     message = `I checked ${plural(functions, 'function')} and found no failing input. That isn't proof there are no bugs.`;
   } else {
     message = `I checked ${plural(functions, 'function')}. ` +
-      (errors ? `${plural(errors, 'input')} the types allow make the code fail` : 'Nothing fails on inputs the types allow') +
+      (errors ? `${plural(errors, 'input')} the types allow ${errors === 1 ? 'makes' : 'make'} the code fail`
+        : 'Nothing fails on inputs the types allow') +
       (assumed ? `; ${assumed} more ${assumed === 1 ? 'fails' : 'fail'} under an assumption` : '') +
-      (nulls ? `; ${nulls} only when handed null` : '') + '.';
+      (nulls ? `; ${nulls} only when handed null` : '') +
+      (wrong ? `; ${wrong} ${wrong === 1 ? 'call gives' : 'calls give'} a wrong result` : '') + '.';
   }
-  return { title, risk, cards, message: state.running ? `${message} Checking again…` : message };
+  const doing = state.analysing ? ' Analyst is checking what the code is meant to do…' : state.running ? ' Checking again…' : '';
+  return { title, risk, cards, message: message + doing };
 }
 
 function capitalize(text: string): string {

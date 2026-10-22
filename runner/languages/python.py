@@ -9,7 +9,7 @@ parameter with a literal default (sep=" ") takes values of the default's type wi
 import ast
 
 from runner.context import function_context
-from runner.languages.base import Function, Language, Param
+from runner.languages.base import EXPECTED, Function, Language, Param
 
 ALLOWED = (ast.Expression, ast.Constant, ast.List, ast.Tuple, ast.Set, ast.Dict, ast.Load, ast.USub, ast.UAdd)
 
@@ -157,6 +157,11 @@ class Python(Language):
     def nullable(self, type_text):
         return bool(type_text) and not type_text.startswith(DEFAULT) and \
             ("None" in split_top(type_text, "|") or type_text.startswith("Optional["))
+
+    def expected_function(self, fn):
+        if fn.returns is None:
+            return f"\n\ndef {EXPECTED}(value):\n    return value\n", EXPECTED
+        return f"\n\ndef {EXPECTED}(value: {fn.returns}) -> {fn.returns}:\n    return value\n", EXPECTED
 
     def model_input(self, fn, args, hypothesis):
         """The model's input, unless a declared type rules it out (passing an int where the annotation

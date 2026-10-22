@@ -24,7 +24,7 @@ in full (java.util.List.of, java.lang.Math), so a user class named Map or Math c
 import re
 from dataclasses import dataclass
 
-from runner.languages.base import MAX_INPUTS, RESULT_MARK, Function, Input, Language, Param, json_string
+from runner.languages.base import EXPECTED, MAX_INPUTS, RESULT_MARK, Function, Input, Language, Param, json_string
 
 HARNESS = "PhantomHarness"
 CALL_MARK = "@@PHANTOM-CALL"  # printed just before the call: no mark = the JVM never got that far
@@ -533,6 +533,13 @@ class Java(Language):
                                        f"{params[target].name}")
             inputs.setdefault(tuple(v.expr for v in row), Input([v.expr for v in row], assumptions=assumptions))
         return list(inputs.values())[:MAX_INPUTS]
+
+    def expected_function(self, fn):
+        returns = (fn.returns or "").strip()
+        if not returns or returns == "void":
+            return None
+        return (f"\n\nclass PhantomExpected {{\n    static {returns} expected({returns} value) {{ return value; }}\n}}\n",
+                "PhantomExpected.expected")
 
     def model_input(self, fn, args, hypothesis):
         shadowed = getattr(fn, "shadowed", frozenset())

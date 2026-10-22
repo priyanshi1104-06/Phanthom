@@ -1,8 +1,9 @@
-"""Phantom from the command line: Specter on any supported file, and sandbox setup.
+"""Phantom from the command line: Specter (and Analyst) on any supported file, and sandbox setup.
 
     python phantom.py samples/buggy.py               # every function in the file (language from the extension)
     python phantom.py samples/js/buggy.js -f average # just one function
     python phantom.py samples/go/buggy.go --json     # findings as JSON (the repro format)
+    python phantom.py samples/intent/intent.py --analyst  # also Analyst: wrong answers, not just crashes
     python phantom.py setup                          # pull/build the sandbox image of every language
     python phantom.py setup go rust                  # just these
     python phantom.py languages                      # what is supported and ready
@@ -45,16 +46,22 @@ def check(argv):
     parser.add_argument("--language", help="override the language (default: from the file extension)")
     parser.add_argument("--sandbox", choices=["auto", "docker", "local"], default="auto",
                         help="where the code runs (auto: Docker if the language's image is there)")
-    parser.add_argument("--no-model", action="store_true", help="edge inputs only, don't ask Specter's model")
+    parser.add_argument("--no-model", action="store_true", help="no AI: edge inputs, and Analyst only reads examples")
+    parser.add_argument("--analyst", action="store_true",
+                        help="also run Analyst: expected results from the code's examples and the AI's reading")
     parser.add_argument("--json", action="store_true", help="print the results as JSON")
     args = parser.parse_args(argv)
     os.environ["PHANTOM_SANDBOX"] = args.sandbox
 
-    from runner import specter
+    from runner import analyst, specter
 
     exit_code, results = 0, {}
     for path in args.files:
         answer = specter.run(path.read_text(), args.language, str(path), use_model=not args.no_model)
+        if args.analyst and answer.get("parsed") and not answer.get("setup"):
+            deeper = analyst.run(path.read_text(), args.language, str(path), use_model=not args.no_model)
+            answer["findings"] += deeper["findings"]
+            answer["analyst_pending"] = deeper["pending"]
         if args.function:
             answer["findings"] = [f for f in answer["findings"] if f["function"] in args.function]
         results[str(path)] = answer
@@ -86,19 +93,31 @@ def print_report(path, answer):
         label = SEVERITY.get(f.get("severity")) if f["status"] == "bug" else LABELS.get(f["status"], f["status"])
         print(f"  {label:<4} {f['function']:<{width}}  {summary(f)}")
         if f["status"] == "bug":
-            origin = {"edge": "boundary input", "model": "model's input", "fuzz": "fuzzed"}.get(f.get("origin"), "")
+            origin = {"edge": "boundary input", "model": "model's input", "fuzz": "fuzzed",
+                      "example": "the code's own example", "intent": "Analyst's reading of the intent"
+                      }.get(f.get("origin"), "")
             print(f"  {'':<4} {'':<{width}}  repro: {f['input']['call']}   (reproduced in a fresh sandbox; {origin})")
+            if f.get("expected"):
+                print(f"  {'':<4} {'':<{width}}  expected because: {f['expected']['quote']}")
             for assumption in f.get("assumptions", []):
                 print(f"  {'':<4} {'':<{width}}  assumes: {assumption}")
     functions = len({f["function"] for f in findings})
-    bugs = len({f["function"] for f in findings if f["status"] == "bug" and f.get("severity") == "error"})
-    assumed = len({f["function"] for f in findings if f["status"] == "bug"}) - bugs
+    crashes = [f for f in findings if f["status"] == "bug" and f["failure"].get("kind") != "wrong_result"]
+    bugs = len({f["function"] for f in crashes if f.get("severity") == "error"})
+    assumed = len({f["function"] for f in crashes}) - bugs
+    wrong = len({f["function"] for f in findings if f.get("failure", {}).get("kind") == "wrong_result"})
     print(f"\n  {bugs} of {functions} functions fail on an input their types allow"
-          + (f"; {assumed} more only under an assumption (WARN/null)." if assumed else ".") + "\n")
+          + (f"; {assumed} more only under an assumption (WARN/null)" if assumed else "")
+          + (f"; {wrong} give a wrong result (Analyst)" if wrong else "") + ".")
+    if answer.get("analyst_pending"):
+        print(f"  Analyst's AI hasn't read {answer['analyst_pending']} functions yet: run again for those.")
+    print()
 
 
 def summary(f):
     status = f["status"]
+    if status == "no_bug_found" and f.get("layer") == "analyst":
+        return f"Analyst: {f.get('examples', 0)} expected results match"
     if status == "no_bug_found":
         return f"no failing input in {f.get('examples', 0)} inputs"
     if status == "skipped":

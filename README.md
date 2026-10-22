@@ -10,11 +10,34 @@ Phantom has three AI layers of increasing depth:
 | Layer | Speed | What it does | State |
 |---|---|---|---|
 | **Specter** | always on, ~1 s | boundary inputs from the types + a fast model's suggestions, run in a sandbox; risk triage of every edit | **built, 10 languages** |
-| **Analyst** | seconds | a large model + a code graph: callers broken by an edit, intent bugs (wrong answers) | next |
+| **Analyst** | seconds | wrong answers: the code's own examples, and the intent its model reads; callers an edit breaks | **built, 10 languages** |
 | **Oracle** | tens of seconds | a frontier agent in the sandbox: writes tests, fuzzes, proves fixes | after Analyst |
 
 Specter escalates on its own: an edit touching databases, memory handling, dangerous calls or deletion asks
 for the Analyst; concurrency, auth, payments or schema migrations ask for the Oracle.
+
+### The Analyst
+
+Specter looks for inputs that make a function crash. The Analyst looks for inputs where it runs fine and
+**answers wrong**. It needs an expected value, and takes it from two places:
+
+1. **Examples written in the code**, any language, any comment style: `>>> is_leap_year(1900)` + `False` in a
+   docstring, `clamp(15, 0, 10) == 10`, `-> 212.0`, `// => 10`, `# => 10`, `assert_eq!(f(2), 4)`. No AI needed.
+   A failing example is red: the code and its own documentation disagree.
+2. **The intent its model reads** (with an AI key): from the docstring, comments, the name, how the file calls
+   the function, or a well-known rule (leap years, unit conversions). Every expectation must quote the words in
+   the code it relies on, exactly, or it is dropped. A failed one is yellow, with the quote and the reason.
+
+The call runs in the sandbox; so does the expected value, through an identity function with the same return
+type, so both are printed by the same harness and compared as text (numbers with a tolerance). A mismatch is
+replayed in a fresh sandbox and reported only if it returns the same wrong value again.
+
+**Broken callers:** each function's result is cached by a hash of the code it depends on (itself, the
+functions it calls, transitively, and the rest of the file). Edit `double()` and the examples of
+`quadruple()`, which calls it, run again: the break shows up on the caller.
+
+In VS Code, depth **Auto** runs the Analyst when you save or when an edit is risky; **Up to Analyst** runs it
+on every pause. Its model reads 4 functions per run (the edited ones and their callers first); the rest follow.
 
 ## Languages
 
@@ -45,7 +68,8 @@ cd extension && npm install && cd ..      # the VS Code extension (needs Node.js
 cp .env.example .env                      # optional: put ANTHROPIC_API_KEY in .env for Specter's model
 ```
 
-Without an API key Specter still works: it uses boundary inputs only, and the status bar says so.
+Without an API key Specter still works: it uses boundary inputs only, and the status bar says so. The
+Analyst then checks the examples written in the code only.
 
 ## In VS Code
 
@@ -58,6 +82,8 @@ Open any file in `samples/` there:
 - **yellow squiggle** = fails only under a named assumption (untyped code: "values may be {}", or extreme
   numbers: "n may be as large as INT_MAX"); also static hints for Python (undefined names, ...);
 - **faint dots** = fails only when handed null/None/nil ("text may be null"): hover to see it;
+- **"Wrong result"** (the Analyst) = the call runs but returns something else than expected: red when the
+  code's own example says so, yellow when it's the AI's reading of the intent (quoted);
 - **"▶ Replay average([])"** above the function = run that input again in a fresh sandbox against the
   code as it is now; after a fix it tells you the bug no longer reproduces;
 - **status bar** = confirmed/assumed counts, the edit's risk and which layer should look
@@ -72,6 +98,7 @@ Settings: `phantom.enabled`, `phantom.backendUrl`, `phantom.debounceMs` (700), `
 python phantom.py samples/buggy.py               # any supported file; the extension picks the language
 python phantom.py samples/go/buggy.go -f Average # one function
 python phantom.py samples/javascript/buggy.js --json --no-model
+python phantom.py samples/intent/intent.py --analyst   # also wrong answers (the Analyst)
 ```
 
 ```
@@ -106,8 +133,9 @@ counts if it reproduces in the sandbox.
 
 ```
 VS Code extension ──HTTP──> backend/app.py ──> runner/specter.py        per function, cached by hash
- (extension/src)    localhost  /triage            ├─ runner/triage.py     risk from the words in the code
-                               /specter           ├─ runner/llm.py        the model's hypotheses (optional)
+ (extension/src)    localhost  /triage            ├─ runner/analyst.py    wrong answers: examples + intent
+                               /specter           ├─ runner/triage.py     risk from the words in the code
+                               /analyst           ├─ runner/llm.py        the model's hypotheses (optional)
 phantom.py (CLI) ────────────> /replay            ├─ runner/languages/    one plugin per language:
                                                   │    functions, literal check, boundary inputs, harness
                                                   └─ runner/executor.py   the Docker sandbox
@@ -115,6 +143,8 @@ phantom.py (CLI) ────────────> /replay            ├─
 
 - **runner/specter.py** - for each function: boundary inputs + model inputs, all run in one sandbox,
   failures grouped and replayed in a fresh one; Python functions are also fuzzed with Hypothesis.
+- **runner/analyst.py** - expectations (the code's examples, the model's reading of the intent), run and
+  compared in the sandbox, mismatches replayed; a call graph decides what an edit re-checks.
 - **runner/languages/base.py** - the plugin contract; one file per language next to it.
 - **runner/triage.py** - low / medium / high / critical per function and per edit, and who to escalate to.
 - **runner/llm.py** - Claude API access per layer (Specter: Haiku; Analyst: Sonnet; Oracle: Fable);
@@ -136,8 +166,10 @@ A finding (`--json`, and what `/specter` returns):
 
 ## Limits (so far)
 
-- Finds crashes, hangs, sanitizer errors and return-type violations. A wrong answer without a crash
-  (`is_leap_year` in the samples) needs an intent check: the Analyst layer.
+- Specter finds crashes, hangs, sanitizer errors and return-type violations; the Analyst finds wrong answers
+  when there is an expected value (an example in the code, or a clear intent its model can quote). Its
+  model's expected values are a reading of the intent, not facts: they are warnings that show their source.
+- The Analyst's call graph is read from the text (a name followed by "("), within one file.
 - Top-level functions with parameters Phantom can build values for; methods, generics, struct/class
   parameters are listed as `skipped`.
 - Pure functions only: no I/O, network or databases (the sandbox blocks them anyway).
@@ -147,7 +179,7 @@ A finding (`--json`, and what `/specter` returns):
 ## Tests
 
 ```bash
-python -m unittest -v                              # Python side: plugins, Specter, sandbox, backend
+python -m unittest -v                              # Python side: plugins, Specter, Analyst, sandbox, backend
 cd extension && npm test                           # extension wording (Node)
 cd extension && npm run test:integration           # end to end in a real VS Code (downloads one, starts the backend)
 ```

@@ -625,6 +625,12 @@ class Go(Language):
             item.assumptions += [n for n in self._bounds(fn, item.args, roles) if n not in item.assumptions]
         return unique
 
+    def expected_function(self, fn):
+        returns = (fn.returns or "").strip()
+        if not returns or returns.startswith("("):  # nothing, or several results
+            return None
+        return f"\n\nfunc phantomExpected(value {returns}) {returns} {{ return value }}\n", "phantomExpected"
+
     def model_input(self, fn, args, hypothesis):
         result = super().model_input(fn, args, hypothesis)
         if result is not None and isinstance(fn, GoFunction):

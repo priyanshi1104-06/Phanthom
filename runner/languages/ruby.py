@@ -22,7 +22,7 @@ import ast
 import re
 from dataclasses import dataclass
 
-from runner.languages.base import RESULT_MARK, Function, Language, Param, json_string
+from runner.languages.base import EXPECTED, RESULT_MARK, Function, Language, Param, json_string
 
 # what a parameter's name suggests (the same idea as the JavaScript plugin, with Ruby's words)
 LIST_WORDS = ("values", "items", "list", "arr", "array", "nums", "numbers", "elements", "entries", "rows", "xs")
@@ -403,6 +403,9 @@ class Ruby(Language):
     def nullable(self, type_text):
         doc, default = _split_type(type_text)
         return default == "nil" or (doc is not None and self._doc_family(doc)[2])
+
+    def expected_function(self, fn):
+        return f"\n\ndef {EXPECTED}(value)\n  value\nend\n", EXPECTED
 
     def model_input(self, fn, args, hypothesis):
         """The model's input: its nil arguments are assumptions as usual, and so is any value that

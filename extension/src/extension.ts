@@ -3,13 +3,15 @@
 //   2. Specter's triage (milliseconds)               -> risk of the edit in the status bar
 //   3. Specter's run (seconds)                       -> squiggles only for failures reproduced in the sandbox:
 //        red = fails on an input its types allow, yellow = needs an assumption, faint dots = only on null
+//   4. Analyst's run (seconds), depending on the depth -> wrong results, reproduced: red when the code's own
+//        example disagrees, yellow when the expected value is the AI's reading of the intent
 // and show a "Replay" link above each function with a confirmed or assumed bug.
 // The extension starts its own backend (server.ts); a second status item picks the depth and the models.
 import * as vscode from 'vscode';
 import {
   bugLine, bugMessage, chosenTiers, comingIn, ConfirmedBug, confirmedBugs, DEPTHS, depthText, describeReplay,
-  diagnosticLevel, escalationReason, Finding, Layer, LAYER_NAMES, lensTitle, panelView, ReplayResult,
-  Risk, StaticFinding, statusText, SUPPORTED_LANGUAGES, TIERS, tierLabel, toZeroBased,
+  diagnosticLevel, escalationReason, Finding, isWrongResult, Layer, LAYER_NAMES, lensTitle, panelView, ReplayResult,
+  Risk, StaticFinding, statusText, SUPPORTED_LANGUAGES, TIERS, tierLabel, toZeroBased, wantsAnalyst,
 } from './findings';
 import { PanelAction, PhantomPanel } from './panel';
 import { Backend } from './server';
@@ -20,7 +22,11 @@ interface FileState {
   staticDiagnostics: vscode.Diagnostic[];
   bugDiagnostics: vscode.Diagnostic[];
   bugs: ConfirmedBug[];
-  findings?: Finding[];  // everything the last run said, for the side panel
+  findings?: Finding[];  // everything the last runs said, for the side panel
+  specterFindings?: Finding[];
+  analystFindings: Finding[];  // kept between Analyst runs, minus functions edited since
+  analysing?: boolean;
+  saved?: boolean;  // saved since the last run: in Auto, Analyst looks
   risk?: Risk;
   sandbox?: string;
   setup?: string;
@@ -36,7 +42,15 @@ interface SpecterAnswer {
   findings: Finding[];
 }
 
+interface AnalystAnswer {
+  parsed: boolean;
+  setup?: string;
+  pending?: number;  // functions its AI hasn't read yet
+  findings: Finding[];
+}
+
 const RETRY_MS = 5000;
+const ANALYST_ROUNDS = 3;  // Analyst runs again at once while its AI still has functions to read
 const SEVERITY = {
   error: vscode.DiagnosticSeverity.Error,
   warning: vscode.DiagnosticSeverity.Warning,
@@ -88,6 +102,12 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
       vscode.languages.registerCodeLensProvider(SUPPORTED_LANGUAGES.map((language) => ({ language })), this),
       vscode.workspace.onDidChangeTextDocument((e) => this.schedule(e.document)),
       vscode.workspace.onDidOpenTextDocument((doc) => this.schedule(doc, 0)),
+      vscode.workspace.onDidSaveTextDocument((doc) => {
+        if (this.supported(doc)) {
+          this.state(doc).saved = true;
+          this.schedule(doc, 0);
+        }
+      }),
       vscode.workspace.onDidCloseTextDocument((doc) => this.forget(doc)),
       vscode.window.onDidChangeActiveTextEditor(() => this.updateStatus()),
       vscode.workspace.onDidChangeConfiguration((e) => {
@@ -137,7 +157,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     for (const layer of Object.keys(LAYER_NAMES) as Layer[]) {
       items.push({
         label: `$(sparkle) ${LAYER_NAMES[layer]}: ${tierLabel(config.tiers[layer])}`,
-        description: layer === 'specter' ? '' : `used from ${layer === 'analyst' ? '0.2' : '0.3'}`,
+        description: layer === 'oracle' ? 'used from 0.3' : '',
         run: () => this.chooseTier(layer),
       });
     }
@@ -171,11 +191,12 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     const state = doc && this.supported(doc) ? this.files.get(doc.uri.toString()) : undefined;
     const file = doc && this.supported(doc) ? vscode.workspace.asRelativePath(doc.uri) : '';
     const view = doc && this.supported(doc)
-      ? panelView(file, { findings: state?.findings, running: this.running > 0, offline: this.offline, setup: state?.setup,
-        problem: this.server.problem, risk: state?.risk })
+      ? panelView(file, { findings: state?.findings, running: this.running > 0, analysing: state?.analysing,
+        offline: this.offline, setup: state?.setup, problem: this.server.problem, risk: state?.risk })
       : { title: 'Phantom', risk: '', cards: [], message: 'Open a file in a language I know and I\'ll check it as you type.' };
     const depth = DEPTHS.find((d) => d.id === config.depth)?.label ?? 'Auto';
-    this.panel.show(view, depth, config.tiers.specter);
+    const models = depthText(config.depth, config.tiers, this.hasModels).replace(/^.*? · /, '');
+    this.panel.show(view, depth, models);
   }
 
   private async onPanelAction(action: PanelAction): Promise<void> {
@@ -264,7 +285,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     const key = doc.uri.toString();
     let state = this.files.get(key);
     if (!state) {
-      state = { staticDiagnostics: [], bugDiagnostics: [], bugs: [] };
+      state = { staticDiagnostics: [], bugDiagnostics: [], bugs: [], analystFindings: [] };
       this.files.set(key, state);
     }
     return state;
@@ -340,14 +361,19 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
       state.sandbox = answer.sandbox;
       state.setup = answer.setup;
       state.risk = answer.risk ?? state.risk;
-      state.findings = answer.findings;
-      state.bugs = confirmedBugs(answer.findings);
-      state.bugDiagnostics = state.bugs.map((bug) => this.bugDiagnostic(doc, bug));
-      this.publish(doc);
-      const errors = state.bugs.filter((b) => b.severity === 'error').length;
+      state.specterFindings = answer.findings;
+      const edited = new Set(state.risk?.changed ?? []);  // Analyst's results for these are out of date
+      state.analystFindings = state.analystFindings.filter((f) => !edited.has(f.function));
+      this.show(doc, state);
+      const errors = state.bugs.filter((b) => b.severity === 'error' && !isWrongResult(b)).length;
       this.log(`${vscode.workspace.asRelativePath(doc.uri)}: ${errors} confirmed, ` +
-        `${state.bugs.length - errors} under an assumption` +
+        `${state.bugs.filter((b) => !isWrongResult(b)).length - errors} under an assumption` +
         (answer.setup ? ` (no ${doc.languageId} sandbox yet: run  ${answer.setup})` : ''));
+      const saved = !!state.saved;
+      state.saved = false;
+      if (!answer.setup && wantsAnalyst(this.config().depth, state.risk, saved)) {
+        await this.analyst(doc, state, body, stale, controller.signal);
+      }
     } catch (error) {
       if (controller.signal.aborted) {
         return;
@@ -367,13 +393,49 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     }
   }
 
-  /** Log once per edit that needs a deeper layer (Analyst and Oracle are the next layers to build). */
+  /** Specter's and Analyst's findings together: squiggles, lenses, the panel. */
+  private show(doc: vscode.TextDocument, state: FileState): void {
+    state.findings = [...(state.specterFindings ?? []), ...state.analystFindings];
+    state.bugs = confirmedBugs(state.findings);
+    state.bugDiagnostics = state.bugs.map((bug) => this.bugDiagnostic(doc, bug));
+    this.publish(doc);
+  }
+
+  /** Analyst after Specter: wrong results. Runs again at once while its AI has functions left to read. */
+  private async analyst(doc: vscode.TextDocument, state: FileState, body: object, stale: () => boolean,
+    signal: AbortSignal): Promise<void> {
+    state.analysing = true;
+    this.updateStatus();
+    try {
+      for (let round = 0; round < ANALYST_ROUNDS; round++) {
+        const answer = await this.post<AnalystAnswer>(
+          '/analyst', { ...body, model: this.config().useModel, models: this.config().tiers }, signal);
+        if (stale() || !answer.parsed) {
+          return;
+        }
+        state.analystFindings = answer.findings;
+        this.show(doc, state);
+        const wrong = confirmedBugs(answer.findings).length;
+        this.log(`${vscode.workspace.asRelativePath(doc.uri)}: Analyst found ${wrong} wrong result${wrong === 1 ? '' : 's'}` +
+          (answer.pending ? ` (${answer.pending} functions still to read)` : ''));
+        if (!answer.pending) {
+          return;
+        }
+      }
+    } finally {
+      state.analysing = false;
+      this.updateStatus();
+    }
+  }
+
+  /** Log once per edit that needs a deeper layer. */
   private noteEscalation(doc: vscode.TextDocument, state: FileState): void {
     const risk = state.risk;
     const key = risk?.escalate ? `${risk.escalate}:${risk.changed.join(',')}` : undefined;
     if (risk?.escalate && key !== state.escalated) {
       this.log(`${vscode.workspace.asRelativePath(doc.uri)}: this edit is ${risk.edit_level} risk ` +
-        `(${escalationReason(risk)}) → ${risk.escalate === 'oracle' ? 'Oracle' : 'Analyst'} should look`);
+        `(${escalationReason(risk)}) → ${risk.escalate === 'oracle' ? 'Oracle should look (0.3); Analyst checks it now'
+          : 'Analyst checks it'}`);
     }
     state.escalated = key;
   }
@@ -408,8 +470,8 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     const range = new vscode.Range(line.lineNumber, line.firstNonWhitespaceCharacterIndex, line.lineNumber, line.text.length);
     const level = diagnosticLevel(bug);
     const diagnostic = new vscode.Diagnostic(range, bugMessage(bug), SEVERITY[level]);
-    diagnostic.source = 'Phantom';
-    diagnostic.code = level === 'error' ? 'confirmed' : 'assumed';
+    diagnostic.source = isWrongResult(bug) ? 'Phantom Analyst' : 'Phantom';
+    diagnostic.code = isWrongResult(bug) ? 'wrong-result' : level === 'error' ? 'confirmed' : 'assumed';
     return diagnostic;
   }
 
@@ -485,7 +547,8 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     try {
       const result = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Phantom: replaying ${call} in a fresh sandbox...` },
-        () => this.post<ReplayResult>('/replay', { ...this.request(doc), function: bug.function, input: bug.input }));
+        () => this.post<ReplayResult>('/replay',
+          { ...this.request(doc), function: bug.function, input: bug.input, expected: bug.expected?.value }));
       const { summary, details } = describeReplay(call, result);
       this.log(`Replay: ${summary}${details ? '\n' + details : ''}`);
       if (result.ok === true) {

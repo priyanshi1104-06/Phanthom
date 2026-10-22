@@ -21,7 +21,7 @@ that isn't in the sandbox. A function declared `never` (or `@returns {never}`) o
 import json
 import re
 
-from runner.languages.base import RESULT_MARK, Function, Language, Param
+from runner.languages.base import EXPECTED, RESULT_MARK, Function, Language, Param
 
 LIST_WORDS = ("values", "items", "list", "arr", "array", "nums", "numbers", "elements", "entries", "rows", "xs")
 TEXT_WORDS = ("name", "str", "text", "word", "address", "path", "url", "key", "email", "label", "title",
@@ -544,6 +544,13 @@ class JavaScript(Language):
     def nullable(self, type_text):
         return bool(type_text) and not type_text.startswith("default:") and \
             any(part.strip() in ("null", "undefined", "any", "unknown") for part in split_union(type_text))
+
+    def expected_function(self, fn):
+        if self.name == "typescript":
+            types = f"value: {fn.returns}): {fn.returns}" if fn.returns else "value: any): any"
+            return f"\n\nfunction {EXPECTED}({types} {{ return value; }}\n", EXPECTED
+        doc = f"/** @param {{{fn.returns}}} value\n * @returns {{{fn.returns}}} */\n" if fn.returns else ""
+        return f"\n\n{doc}function {EXPECTED}(value) {{ return value; }}\n", EXPECTED
 
     def model_input(self, fn, args, hypothesis):
         """The model's input, unless a declared type (TypeScript or JSDoc) rules it out: passing an array

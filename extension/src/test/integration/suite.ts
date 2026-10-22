@@ -1,4 +1,4 @@
-// Runs inside the test VS Code (see run.ts): open samples/buggy.py and check what the user would see.
+// Runs inside the test VS Code (see run.ts): open the samples and check what the user would see.
 import { strict as assert } from 'node:assert';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
@@ -87,4 +87,16 @@ export async function run(): Promise<void> {
   }
   const nullHints = vscode.languages.getDiagnostics(js).filter((d) => d.severity === vscode.DiagnosticSeverity.Hint);
   assert.ok(nullHints.some((d) => d.message.startsWith('Fails if text may be null')), 'a null-only hint');
+
+  // 6. Analyst ("Up to Analyst"): wrong results, from the code's own examples, with a Replay link each.
+  await vscode.workspace.getConfiguration('phantom').update('depth', 'analyst', vscode.ConfigurationTarget.Global);
+  const intent = vscode.Uri.file(path.join(process.env.PHANTOM_REPO!, 'samples', 'intent', 'intent.py'));
+  await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(intent));
+  const analyst = () => vscode.languages.getDiagnostics(intent).filter((d) => d.source === 'Phantom Analyst');
+  const wrong = await waitFor('three wrong results', analyst, (d) => d.length === 3);
+  assert.ok(wrong.some((d) => d.message.startsWith('Wrong result (reproduced): is_leap_year(1900) returned True, expected False')));
+  assert.ok(wrong.every((d) => d.severity === vscode.DiagnosticSeverity.Error), 'the code\'s own examples are errors');
+  const intentLenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', intent);
+  assert.ok(intentLenses.some((lens) => lens.command?.title.includes('wrong result, expected False')));
+  await vscode.workspace.getConfiguration('phantom').update('depth', undefined, vscode.ConfigurationTarget.Global);
 }

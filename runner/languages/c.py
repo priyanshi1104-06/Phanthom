@@ -24,7 +24,7 @@ arrays whose length nothing states carry assumptions.
 import re
 from collections import namedtuple
 
-from runner.languages.base import MAX_INPUTS, RESULT_MARK, Function, Input, Language, Param
+from runner.languages.base import EXPECTED, MAX_INPUTS, RESULT_MARK, Function, Input, Language, Param
 
 INTS = {  # canonical integer type -> (signed, MIN macro, MAX macro)
     "signed char": (True, "SCHAR_MIN", "SCHAR_MAX"), "short": (True, "SHRT_MIN", "SHRT_MAX"),
@@ -416,6 +416,14 @@ class C(Language):
             if not 0 <= value < top:
                 found.append(f"{p.name} may be outside {fn.params[ref].name}")
         return found
+
+    def expected_function(self, fn):
+        returns = (fn.returns or "").strip()
+        if not returns or returns == "void":
+            return None
+        if self.name == "cpp":  # a copy, never a reference to the argument
+            returns = re.sub(r"^const\s+", "", re.sub(r"\s*&+$", "", returns))
+        return f"\n\n{returns} {EXPECTED}({returns} value) {{ return value; }}\n", EXPECTED
 
     def model_input(self, fn, args, hypothesis):
         made = super().model_input(fn, args, hypothesis)

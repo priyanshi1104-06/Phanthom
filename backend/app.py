@@ -6,7 +6,9 @@ GET  /health                                         -> sandbox per language, mo
 POST /static  {"source", "language"?}                -> Python static checks (milliseconds; other languages: [])
 POST /triage  {"source", "language"?, "path"?}       -> Specter's risk rating of the file and the edit (milliseconds)
 POST /specter {"source", "language"?, "path"?, "model"?} -> Specter: reproduced failing inputs per function (seconds)
-POST /replay  {"source", "language"?, "path"?, "function", "input"} -> run one finding's input again, fresh sandbox
+POST /analyst {"source", "language"?, "path"?, "model"?} -> Analyst: reproduced wrong results per function (seconds)
+POST /replay  {"source", "language"?, "path"?, "function", "input", "expected"?} -> run one finding's input again,
+              fresh sandbox (with "expected": a wrong-result finding, compared with that value)
 
 `language` is a VS Code languageId or a Phantom language name; without it the file extension of
 `path` decides, and without both it is Python (what the Phase 2 extension sent).
@@ -14,6 +16,8 @@ POST /replay  {"source", "language"?, "path"?, "function", "input"} -> run one f
 Specter caches each function's result by a hash of the code it needs, so typing in one function
 re-runs only that function. The backend remembers each file's function texts from the last
 /specter call, so triage can tell which functions the edit changed.
+Analyst keeps its own memory of each file, so the functions edited since its last look (and their callers)
+are the first ones its model reads.
 The extension sends the whole file because this backend runs on the same machine (localhost).
 """
 import threading
@@ -23,7 +27,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from runner import languages, llm, specter
+from runner import analyst, languages, llm, specter
 from runner.static import static_findings
 
 app = FastAPI(title="Phantom")
@@ -52,6 +56,7 @@ class Replay(BaseModel):
     language: str | None = None
     path: str | None = None
     input: dict | None = None  # a finding's "input": {"exprs": [...]} or {"args": [...]}
+    expected: str | None = None  # a wrong-result finding's expected value, as the harness shows it
     args: list | None = None  # Phase 2 extension: Python arguments as tagged JSON
 
 
@@ -76,6 +81,7 @@ class LastLook:
 
 
 last_look = LastLook()
+analyst_look = LastLook()
 
 
 def language_of(request):
@@ -89,13 +95,16 @@ def file_key(request):
     return f"{language}\0{path or ''}"
 
 
+BUILT = ("specter", "analyst")  # Oracle arrives in 0.3
+
+
 @app.get("/health")
 def health():
     ready = {}
     for lang in languages.LANGUAGES.values():
         ready[lang.name] = {"title": lang.title, "vscode_ids": list(lang.vscode_ids), "sandbox": lang.sandbox()}
     python = ready.get("python", {}).get("sandbox")
-    layers = {name: {"tier": llm.LAYER_TIERS[name], "built": name == "specter"} for name in llm.LAYERS}
+    layers = {name: {"tier": llm.LAYER_TIERS[name], "built": name in BUILT} for name in llm.LAYERS}
     return {"ok": True, "sandbox": python, "languages": ready, "model": llm.status(),
             "layers": layers, "tiers": llm.tier_choices()}
 
@@ -129,8 +138,21 @@ def run_specter(request: Source):
     return answer
 
 
+@app.post("/analyst")
+def run_analyst(request: Source):
+    language, path = language_of(request)
+    key = file_key(request)
+    answer = analyst.run(request.source, language, path, use_model=request.model, previous=analyst_look.get(key),
+                         models=request.models)
+    if answer.get("parsed"):
+        analyst_look.put(key, specter.function_texts(request.source, language, path))
+    return answer
+
+
 @app.post("/replay")
 def replay(request: Replay):
     language, path = language_of(request)
     given = request.input or {"args": request.args}
+    if request.expected is not None:
+        return analyst.replay(request.source, language, request.function, given, request.expected, path)
     return specter.replay(request.source, language, request.function, given, path)

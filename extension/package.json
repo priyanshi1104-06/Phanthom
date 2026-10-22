@@ -1,8 +1,8 @@
 {
   "name": "phantom",
   "displayName": "Phantom",
-  "description": "Finds bugs while you type, in Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby and PHP, and backs each one with a failing input reproduced in a sandbox.",
-  "version": "0.1.0",
+  "description": "Finds bugs while you type, in Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby and PHP: crashes and wrong answers, each backed by an input reproduced in a sandbox.",
+  "version": "0.2.0",
   "publisher": "phantom",
   "license": "UNLICENSED",
   "private": true,
@@ -105,9 +105,9 @@
             "oracle"
           ],
           "enumDescriptions": [
-            "Specter always; deeper layers only when an edit is risky",
+            "Specter always; the Analyst when you save, or when an edit is risky",
             "Specter only",
-            "Up to the Analyst (coming in 0.2)",
+            "The Analyst too, on every pause: wrong answers and broken callers",
             "Up to the Oracle (coming in 0.3)"
           ],
           "description": "How deep Phantom looks."
@@ -171,7 +171,7 @@
             "for tricky code",
             "slowest, most thorough"
           ],
-          "description": "How deeply the Analyst (from 0.2) thinks."
+          "description": "How deeply the Analyst thinks when it reads what your code is meant to do."
         },
         "phantom.tiers.oracle": {
           "type": "string",
@@ -244,7 +244,7 @@
           {
             "id": "read",
             "title": "Read a finding",
-            "description": "Red: fails on an input your types allow. Yellow: fails under an assumption. Faint dots: only on null. ▶ Replay runs the input again against your current code.",
+            "description": "Red: fails on an input your types allow, or disagrees with its own example. Yellow: fails under an assumption, or gives a result the Analyst didn't expect. Faint dots: only on null. ▶ Replay runs the input again against your current code.",
             "media": {
               "markdown": "media/walkthrough/read.md"
             }
@@ -252,7 +252,7 @@
           {
             "id": "depth",
             "title": "Choose depth and tier",
-            "description": "Specter checks every pause. The Analyst and the Oracle look deeper and arrive as updates. Pick how deep each layer thinks.\n[Choose depth and tiers](command:phantom.chooseDepth)",
+            "description": "Specter checks every pause; the Analyst checks what your code is meant to do; the Oracle arrives in an update. Pick how deep each layer thinks.\n[Choose depth and tiers](command:phantom.chooseDepth)",
             "media": {
               "markdown": "media/walkthrough/depth.md"
             },

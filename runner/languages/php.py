@@ -39,7 +39,7 @@ import functools
 import re
 from dataclasses import dataclass, field
 
-from runner.languages.base import MAX_INPUTS, RESULT_MARK, Function, Input, Language, Param
+from runner.languages.base import EXPECTED, MAX_INPUTS, RESULT_MARK, Function, Input, Language, Param
 from runner.languages.javascript import TEXT_WORDS, JavaScript, split_union
 
 PHP = "php -n -d memory_limit=128M -d display_errors=stderr -d log_errors=0"
@@ -510,6 +510,13 @@ class Php(Language):
             return type_text[len("default:"):].strip().lower() == "null"
         lowered = type_text.strip().lower()
         return lowered.startswith("?") or any(p.strip("() ") in ("null", "mixed") for p in split_union(lowered))
+
+    def expected_function(self, fn):
+        returns = (fn.returns or "").strip()
+        if returns in ("void", "never"):
+            return None
+        types = (f"{returns} $value): {returns}" if returns else "$value)")
+        return f"\n\nfunction {EXPECTED}({types} {{ return $value; }}\n", EXPECTED
 
     def model_input(self, fn, args, hypothesis):
         result = super().model_input(fn, args, hypothesis)
