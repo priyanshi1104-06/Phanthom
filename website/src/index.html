@@ -21,6 +21,12 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div class="intro" aria-hidden="true">
+    <svg class="intro-mark" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="intro-gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F7E2A6"/><stop offset=".55" stop-color="#D4A646"/><stop offset="1" stop-color="#9C6B1E"/></linearGradient></defs><path class="half" fill="url(#intro-gold)" fill-rule="evenodd" d="M12 2.4C7.6 2.4 4.2 5.6 4.2 10.1c0 4.6 2.8 8.7 6.6 10.9l1.2.7V2.4zM6.6 9.9c.5-1.2 1.5-1.9 2.6-1.9s2 .7 2.4 1.9c-.5 1.1-1.4 1.7-2.5 1.7S7.1 11 6.6 9.9z"/><path class="dashes" fill="none" stroke="#D4A646" stroke-width="1.1" stroke-linecap="round" d="M12 2.4c4.4 0 7.8 3.2 7.8 7.7 0 4.6-2.8 8.7-6.6 10.9l-1.2.7"/></svg>
+    <div class="intro-word">PHANTOM<span>.AI</span></div>
+    <div class="intro-line">Code, unmasked.</div>
+  </div>
+  <div class="glow" aria-hidden="true"></div>
   <a class="skip" href="#main">Skip to content</a>
 
   <header class="top">
@@ -36,15 +42,16 @@
   <main id="main">
     <div class="hero">
       <div class="wrap">
-        <h1>Code, unmasked.</h1>
-        <p class="lead">Phantom checks your code while you write it. When it says a function is broken, it shows
+        <div class="hero-mark" aria-hidden="true"><svg class="float" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="hero-gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F7E2A6"/><stop offset=".55" stop-color="#D4A646"/><stop offset="1" stop-color="#9C6B1E"/></linearGradient></defs><path class="half" fill="url(#hero-gold)" fill-rule="evenodd" d="M12 2.4C7.6 2.4 4.2 5.6 4.2 10.1c0 4.6 2.8 8.7 6.6 10.9l1.2.7V2.4zM6.6 9.9c.5-1.2 1.5-1.9 2.6-1.9s2 .7 2.4 1.9c-.5 1.1-1.4 1.7-2.5 1.7S7.1 11 6.6 9.9z"/><path class="dashes" fill="none" stroke="#D4A646" stroke-width="1.1" stroke-linecap="round" d="M12 2.4c4.4 0 7.8 3.2 7.8 7.7 0 4.6-2.8 8.7-6.6 10.9l-1.2.7"/></svg></div>
+        <h1 class="rise">Code, unmasked.</h1>
+        <p class="lead rise">Phantom checks your code while you write it. When it says a function is broken, it shows
           you the exact input that breaks it, because it has already run it.</p>
-        <div class="actions">
+        <div class="actions rise">
           <a class="button primary" href="{{cta_href}}">{{cta_label}}</a>
           <a class="textlink" href="#how">How it works</a>
         </div>
 
-        <figure class="shot" aria-label="Phantom in VS Code: a wrong result and a crash, each with its input">
+        <figure class="shot rise" aria-label="Phantom in VS Code: a wrong result and a crash, each with its input">
           <div class="bar"><i></i><i></i><i></i><span>samples/intent/intent.py</span></div>
 <pre class="code"><span class="lens"><em>⚑</em> Phantom: wrong result, expected False  ▶ Replay is_leap_year(1900)</span><span class="ln">8</span><span class="wave"><b class="k">def</b> <b class="f">is_leap_year</b>(year: <b class="t">int</b>) -&gt; <b class="t">bool</b>:</span>
 <span class="ln">9</span>    <b class="s">"""True for leap years in the Gregorian calendar.</b>
@@ -79,7 +86,7 @@
     </div>
 
     <section id="how">
-      <div class="wrap prose">
+      <div class="wrap prose reveal">
         <h2>It doesn't guess.</h2>
         <p>Each time you stop typing, Phantom takes the functions you just changed and calls them with the inputs
           that tend to break code: an empty list, zero, a negative number, an empty string. Every call runs in a
@@ -91,7 +98,7 @@
     </section>
 
     <section>
-      <div class="wrap prose">
+      <div class="wrap prose reveal">
         <h2>It catches the wrong answers too.</h2>
         <p>Some bugs never crash. <code>is_leap_year(1900)</code> returns <code>True</code> and carries on as if
           nothing happened. Phantom reads the examples you already write in comments and docstrings and holds the
@@ -103,7 +110,7 @@
     </section>
 
     <section>
-      <div class="wrap prose">
+      <div class="wrap prose reveal">
         <h2>Three layers, from quick to thorough.</h2>
         <dl class="rows">
           <dt>Specter</dt>
@@ -122,7 +129,7 @@
     </section>
 
     <section>
-      <div class="wrap prose">
+      <div class="wrap prose reveal">
         <h2>What happens to your code.</h2>
         <p>It stays on your machine. Phantom's engine and its sandboxes run on your own computer. The AI is
           optional: without it, Phantom still finds and proves bugs; with it on, the function being checked is sent
@@ -133,7 +140,7 @@
     </section>
 
     <section id="early-access">
-      <div class="wrap prose">
+      <div class="wrap prose reveal">
         <h2>Try it.</h2>
         <p>Phantom is free while it's in early access. It runs in VS Code and needs Docker and Python 3 on your
           machine.</p>
@@ -153,5 +160,6 @@
       <span>© 2026 Phantom{{contact_footer}}</span>
     </div>
   </footer>
+  <script src="assets/site.js" defer></script>
 </body>
 </html>

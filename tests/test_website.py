@@ -29,8 +29,13 @@ class Links(HTMLParser):
         for name in ("href", "src"):
             if attrs.get(name):
                 self.refs.append(attrs[name])
-        if tag in ("script", "style") or "style" in attrs or any(a.startswith("on") for a in attrs):
+        if tag == "style" or (tag == "script" and not attrs.get("src")) or "style" in attrs \
+                or any(a.startswith("on") for a in attrs):
             self.inline.append(tag)
+
+    def handle_data(self, data):
+        if self.lasttag == "script" and data.strip():
+            self.inline.append("script")
 
 
 def site_file(site, folder):

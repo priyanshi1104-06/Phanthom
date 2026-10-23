@@ -21,6 +21,12 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div class="intro" aria-hidden="true">
+    <svg class="intro-mark" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="intro-gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F7E2A6"/><stop offset=".55" stop-color="#D4A646"/><stop offset="1" stop-color="#9C6B1E"/></linearGradient></defs><path class="half" fill="url(#intro-gold)" fill-rule="evenodd" d="M12 2.4C7.6 2.4 4.2 5.6 4.2 10.1c0 4.6 2.8 8.7 6.6 10.9l1.2.7V2.4zM6.6 9.9c.5-1.2 1.5-1.9 2.6-1.9s2 .7 2.4 1.9c-.5 1.1-1.4 1.7-2.5 1.7S7.1 11 6.6 9.9z"/><path class="dashes" fill="none" stroke="#D4A646" stroke-width="1.1" stroke-linecap="round" d="M12 2.4c4.4 0 7.8 3.2 7.8 7.7 0 4.6-2.8 8.7-6.6 10.9l-1.2.7"/></svg>
+    <div class="intro-word">PHANTOM<span>.AI</span></div>
+    <div class="intro-line">Code, unmasked.</div>
+  </div>
+  <div class="glow" aria-hidden="true"></div>
   <a class="skip" href="#main">Skip to content</a>
 
   <header class="top">
@@ -36,16 +42,17 @@
   <main id="main">
     <div class="hero">
       <div class="wrap">
-        <h1>Code, unmasked.</h1>
-        <p class="lead">Phantom is an <strong>execution-verified</strong> bug detection engine for your editor. It runs
+        <div class="hero-mark" aria-hidden="true"><svg class="float" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="hero-gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F7E2A6"/><stop offset=".55" stop-color="#D4A646"/><stop offset="1" stop-color="#9C6B1E"/></linearGradient></defs><path class="half" fill="url(#hero-gold)" fill-rule="evenodd" d="M12 2.4C7.6 2.4 4.2 5.6 4.2 10.1c0 4.6 2.8 8.7 6.6 10.9l1.2.7V2.4zM6.6 9.9c.5-1.2 1.5-1.9 2.6-1.9s2 .7 2.4 1.9c-.5 1.1-1.4 1.7-2.5 1.7S7.1 11 6.6 9.9z"/><path class="dashes" fill="none" stroke="#D4A646" stroke-width="1.1" stroke-linecap="round" d="M12 2.4c4.4 0 7.8 3.2 7.8 7.7 0 4.6-2.8 8.7-6.6 10.9l-1.2.7"/></svg></div>
+        <h1 class="rise">Code, unmasked.</h1>
+        <p class="lead rise">Phantom is an <strong>execution-verified</strong> bug detection engine for your editor. It runs
           every changed function against adversarial inputs in a <strong>hermetic sandbox</strong> and reports only
           failures it can <strong>reproduce</strong>.</p>
-        <div class="actions">
+        <div class="actions rise">
           <a class="button primary" href="{{cta_href}}">{{cta_label}}</a>
           <a class="textlink" href="#layers">Explore models</a>
         </div>
 
-        <figure class="shot" aria-label="Phantom in VS Code: a wrong result and a crash, each with its input">
+        <figure class="shot rise" aria-label="Phantom in VS Code: a wrong result and a crash, each with its input">
           <div class="bar"><i></i><i></i><i></i><span>samples/intent/intent.py</span></div>
 <pre class="code"><span class="lens"><em>⚑</em> Phantom: wrong result, expected False  ▶ Replay is_leap_year(1900)</span><span class="ln">8</span><span class="wave"><b class="k">def</b> <b class="f">is_leap_year</b>(year: <b class="t">int</b>) -&gt; <b class="t">bool</b>:</span>
 <span class="ln">9</span>    <b class="s">"""True for leap years in the Gregorian calendar.</b>
@@ -80,7 +87,7 @@
     </div>
 
     <section>
-      <div class="wrap prose">
+      <div class="wrap prose reveal">
         <h2>Execution, not inference.</h2>
         <p>Static analysis predicts failures. Phantom <strong>executes</strong> them. Every finding is a
           <strong>reproducible artifact</strong>: the function, the input, the observed failure, replayed in a fresh
@@ -89,7 +96,7 @@
     </section>
 
     <section id="layers">
-      <div class="wrap prose">
+      <div class="wrap prose reveal">
         <h2>Three layers of analysis.</h2>
         <dl class="rows">
           <dt>Specter</dt>
@@ -119,7 +126,7 @@
     </section>
 
     <section>
-      <div class="wrap prose">
+      <div class="wrap prose reveal">
         <h2>Hermetic by design.</h2>
         <p>Every execution runs in a disposable container with <strong>no network</strong>, a <strong>read-only
           filesystem</strong>, all Linux capabilities dropped, no privilege escalation, an unprivileged user and
@@ -129,7 +136,7 @@
     </section>
 
     <section>
-      <div class="wrap prose">
+      <div class="wrap prose reveal">
         <h2>Ten languages. Native toolchains.</h2>
         <p>Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby and PHP, each executed with its
           <strong>real compiler or runtime</strong>, with sanitizers enabled for C and C++.</p>
@@ -137,7 +144,7 @@
     </section>
 
     <section>
-      <div class="wrap prose">
+      <div class="wrap prose reveal">
         <h2>Local by default.</h2>
         <p>Analysis and execution run <strong>on your machine</strong>. Model assistance is optional and tiered,
           from <strong>Swift</strong> to <strong>Deepest</strong>; when enabled, it receives only the code under
@@ -147,7 +154,7 @@
     </section>
 
     <section id="early-access" class="finale">
-      <div class="wrap prose">
+      <div class="wrap prose reveal">
         <h2>The bugs Phantom runs <strong>never meet your users.</strong></h2>
         <p>Phantom 0.2 is available in early access for VS Code.</p>
         <div class="actions">
@@ -166,5 +173,6 @@
       <span>© 2026 Phantom{{contact_footer}}</span>
     </div>
   </footer>
+  <script src="assets/site.js" defer></script>
 </body>
 </html>

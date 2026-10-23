@@ -184,7 +184,7 @@ Resources:
           ReferrerPolicy: { ReferrerPolicy: strict-origin-when-cross-origin, Override: true }
           ContentSecurityPolicy:
             ContentSecurityPolicy: >-
-              default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self' data:;
+              default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:;
               base-uri 'none'; form-action 'none'; frame-ancestors 'none'
             Override: true
         CustomHeadersConfig:
