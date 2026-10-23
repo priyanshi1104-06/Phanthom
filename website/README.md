@@ -73,14 +73,16 @@ steps to get Phantom running in VS Code. Early access is open to everyone who si
 1. **Pick a sign-in address prefix**, for example `phantom-ai-login`. Your sign-in service will live at
    `https://PREFIX.auth.us-east-1.amazoncognito.com` (the prefix must be unused across all of AWS).
 2. **Google Cloud: the consent screen.** Sign in at console.cloud.google.com, create a project called `Phantom`,
-   then **APIs & Services > OAuth consent screen**: user type **External**, app name `Phantom`, your support
-   email, the logo from `brand/`, privacy policy `SITE_URL/privacy.html`, authorized domains `amazoncognito.com`
-   and your own domain. Scopes: `openid`, `email`, `profile` (nothing sensitive, so Google doesn't review it).
-   Then **Publish app** so anyone can sign in, not only test users.
-3. **Google Cloud: the client.** **APIs & Services > Credentials > Create credentials > OAuth client ID**, type
-   **Web application**, *Authorized redirect URIs*:
+   then open **Google Auth Platform** (search "OAuth consent screen") > **Get started**: app name `Phantom`, your
+   support email, audience **External**, contact email, agree, **Create**. Under **Branding** add your home page
+   `SITE_URL`, privacy policy `SITE_URL/privacy.html`, and authorized domains `amazoncognito.com` and your own
+   domain. Leave the logo empty for now: a logo makes Google review the branding first (days). Under **Audience**,
+   **Publish app** so anyone can sign in, not only test users. Scopes stay `openid`, `email`, `profile`
+   (nothing sensitive, so no review).
+3. **Google Cloud: the client.** **Google Auth Platform > Clients > Create client**, type **Web application**,
+   name `Phantom website`, *Authorized redirect URIs*:
    `https://PREFIX.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`. Copy the **Client ID** and **Client
-   secret** (keep the secret out of git, chat and email: it goes only into the next step).
+   secret** (keep the secret out of git, chat and email: it goes only into the next steps).
 4. **Amazon SES, for the confirmation email.** AWS console, region US East (N. Virginia), **SES > Identities >
    Create identity**: your domain (best: SES gives you DNS records, which Route 53 can add for you) or one email
    address made for Phantom. New SES accounts are in a *sandbox* that only sends to verified addresses, so open
