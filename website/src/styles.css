@@ -10,10 +10,10 @@
   --wordmark-size: 15px;      /* the word PHANTOM.AI next to it */
   --header-height: 64px;      /* height of the bar at the top */
   --headline-size: 80px;      /* "Code, unmasked." */
-  --intro-size: 21px;         /* the sentence under the headline */
+  --intro-size: 23px;         /* the sentence under the headline */
   --heading-size: 40px;       /* section titles: "Execution, not inference." ... */
-  --text-size: 18px;          /* paragraphs */
-  --layer-text-size: 17px;    /* the Specter / Analyst / Oracle descriptions */
+  --text-size: 20px;          /* paragraphs */
+  --layer-text-size: 19px;    /* the Specter / Analyst / Oracle descriptions */
   --button-text-size: 15px;   /* "Request early access" */
   --choose-size: 28px;        /* "CHOOSE YOUR PHANTOM!" */
   --ending-size: 60px;        /* the last, big line */
@@ -130,7 +130,9 @@ code, kbd { font-family: var(--mono); font-size: 0.9em; }
 .textlink { color: var(--muted); text-decoration: none; font-size: 15px; padding: 11px 4px; }
 .textlink:hover { color: var(--text); }
 .textlink::after { content: " \2193"; }
-.button.small { padding: 9px 16px; font-size: 14px; }
+.button.small { padding: 9px 18px; font-size: 14px; }
+.button.ghost { border-color: var(--line-strong); color: var(--text); }
+.button.ghost:hover { background: var(--bg-raised); }
 
 /* ---------- hero ---------- */
 
@@ -192,7 +194,7 @@ h1 {
 
 section { padding: 96px 0; border-top: 1px solid var(--line); }
 
-.prose > * { max-width: 720px; }
+.prose > * { max-width: 780px; }
 .prose h2 { margin: 0 0 24px; font-size: clamp(calc(var(--heading-size) * 0.7), 3.6vw, var(--heading-size)); line-height: 1.15;
   font-weight: 600; letter-spacing: -0.025em; }
 .prose p { margin: 0 0 18px; font-size: var(--text-size); line-height: 1.7; color: var(--muted); }
@@ -201,7 +203,7 @@ section { padding: 96px 0; border-top: 1px solid var(--line); }
 
 .rows { margin: 8px 0 32px; display: grid; grid-template-columns: 140px minmax(0, 1fr); border-top: 1px solid var(--line); }
 .rows dt, .rows dd { margin: 0; padding: 20px 0; border-bottom: 1px solid var(--line); }
-.rows dt { font-weight: 600; font-size: 18px; }
+.rows dt { font-weight: 600; font-size: 20px; }
 .rows dt span { display: block; font-weight: 400; font-size: 14px; color: var(--faint); }
 .rows dd { color: var(--muted); font-size: var(--layer-text-size); line-height: 1.65; }
 .rows dd em { color: var(--text); }
@@ -217,6 +219,19 @@ section { padding: 96px 0; border-top: 1px solid var(--line); }
   letter-spacing: -0.03em; }
 .prose .choose { margin: 40px 0 0; font-size: var(--choose-size); font-weight: 500; letter-spacing: 0.16em; color: var(--gold-text); }
 .finale h2 strong { color: var(--gold-text); font-weight: 600; }
+
+/* ---------- sign in ---------- */
+
+.signin { min-height: calc(100vh - var(--header-height)); display: flex; align-items: center; justify-content: center; padding-top: 48px; padding-bottom: 96px; }
+.signin-card { width: 100%; max-width: 420px; text-align: center; }
+.signin-mark { width: 44px; height: 44px; margin-bottom: 20px; }
+.signin-card h1 { max-width: none; font-size: 32px; letter-spacing: -0.02em; }
+.signin-card > p { margin: 12px 0 32px; color: var(--muted); font-size: 17px; }
+.button.google { width: 100%; padding: 14px 20px; gap: 12px; font-size: 16px; background: #ffffff; color: #1f1f1f; border-color: #dadce0; }
+.button.google img { width: 20px; height: 20px; }
+.button.google:hover { background: #f4f5f6; }
+.button[aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
+.signin-card .signin-note { margin: 20px 0 0; font-size: 14px; color: var(--faint); }
 
 /* ---------- footer ---------- */
 

@@ -7,6 +7,8 @@ site.json:
     site_url         "https://phantom.example" (no trailing slash): canonical links, the sitemap, the share image
     contact_email    where "Request early access" writes to, and the footer
     marketplace_url  the VS Code Marketplace listing; when set, the main button becomes "Install for VS Code"
+    signin_url       where "Continue with Google" starts the sign-in (Phantom Cloud); empty: the button says
+                     accounts are coming, and does nothing
 """
 import argparse
 import html
@@ -18,12 +20,13 @@ from pathlib import Path
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent
-PAGES = ("index.html", "technical.html", "404.html")
+PAGES = ("index.html", "technical.html", "signin.html", "404.html")
 
 
 def load(path):
     site = json.loads(Path(path).read_text())
-    return {key: str(site.get(key, "")).strip() for key in ("site_url", "contact_email", "marketplace_url")}
+    return {key: str(site.get(key, "")).strip()
+            for key in ("site_url", "contact_email", "marketplace_url", "signin_url")}
 
 
 def problems(site, release):
@@ -34,6 +37,8 @@ def problems(site, release):
         found.append("contact_email doesn't look like an email address")
     if site["marketplace_url"] and not site["marketplace_url"].startswith("https://marketplace.visualstudio.com/"):
         found.append("marketplace_url must be a https://marketplace.visualstudio.com/ link")
+    if site.get("signin_url") and not site["signin_url"].startswith("https://"):
+        found.append("signin_url must be an https:// link")
     if release:
         found += [f"{key} is empty in website/site.json" for key in ("site_url", "contact_email") if not site[key]]
     return found
@@ -48,8 +53,15 @@ def values(site):
     else:
         cta_href, cta_label = "#early-access", "Request early access"
     footer = f' · <a href="mailto:{html.escape(email)}">{html.escape(email)}</a>' if email else ""
+    google = '<img src="assets/google.svg" alt="" width="20" height="20">Continue with Google'
+    if site.get("signin_url"):
+        button = f'<a class="button google" href="{html.escape(site["signin_url"])}">{google}</a>'
+        note = "Phantom only receives your name and email address from Google."
+    else:
+        button = f'<span class="button google" aria-disabled="true">{google}</span>'
+        note = "Accounts open with Phantom Cloud, coming soon. Until then, Phantom runs on your machine without one."
     return {"site_url": html.escape(site["site_url"]), "cta_href": html.escape(cta_href), "cta_label": cta_label,
-            "contact_footer": footer}
+            "contact_footer": footer, "google_button": button, "signin_note": note}
 
 
 def build(site, out):
