@@ -116,21 +116,21 @@ code, kbd { font-family: var(--mono); font-size: 0.9em; }
 
 /* ---------- hero ---------- */
 
-.hero { padding: 112px 0 88px; }
+.hero { padding: clamp(56px, 8vh, 96px) 0 88px; }
 
 h1 {
   margin: 0; max-width: 15ch;
-  font-size: clamp(44px, 7.4vw, 84px); line-height: 1.02; font-weight: 600; letter-spacing: -0.035em;
+  font-size: clamp(44px, min(6.4vw, 9vh), 80px); line-height: 1.02; font-weight: 600; letter-spacing: -0.035em;
 }
 
-.lead { margin: 28px 0 0; max-width: 40em; font-size: clamp(18px, 2.1vw, 21px); color: var(--muted); }
+.lead { margin: 22px 0 0; max-width: 40em; font-size: clamp(18px, 2.1vw, 21px); color: var(--muted); }
 
-.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin-top: 40px; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin-top: 32px; }
 
 /* ---------- the editor picture ---------- */
 
 .shot {
-  margin: 72px 0 0; border-radius: var(--radius); overflow: hidden;
+  margin: clamp(40px, 6vh, 64px) 0 0; border-radius: var(--radius); overflow: hidden;
   border: 1px solid #26262c; background: #111114; box-shadow: var(--shadow);
   color: #d6d4cf; display: grid; grid-template-columns: minmax(0, 1fr) 320px;
 }
