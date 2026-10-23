@@ -15,6 +15,8 @@
   --text-size: 20px;          /* paragraphs */
   --layer-text-size: 19px;    /* the Specter / Analyst / Oracle descriptions */
   --button-text-size: 15px;   /* "Request early access" */
+  --signin-size: 16px;        /* "Sign in" at the top */
+  --model-name-size: 28px;    /* Specter, Analyst, Oracle */
   --choose-size: 28px;        /* "CHOOSE YOUR PHANTOM!" */
   --ending-size: 60px;        /* the last, big line */
 }
@@ -130,7 +132,7 @@ code, kbd { font-family: var(--mono); font-size: 0.9em; }
 .textlink { color: var(--muted); text-decoration: none; font-size: 15px; padding: 11px 4px; }
 .textlink:hover { color: var(--text); }
 .textlink::after { content: " \2193"; }
-.button.small { padding: 9px 18px; font-size: 14px; }
+.button.small { padding: 11px 22px; font-size: var(--signin-size); }
 .button.ghost { border-color: var(--line-strong); color: var(--text); }
 .button.ghost:hover { background: var(--bg-raised); }
 
@@ -201,9 +203,9 @@ section { padding: 96px 0; border-top: 1px solid var(--line); }
 .prose p:last-child { margin-bottom: 0; }
 .prose code { color: var(--text); font-size: 0.86em; padding: 2px 6px; border-radius: 6px; background: var(--bg-raised); border: 1px solid var(--line); }
 
-.rows { margin: 8px 0 32px; display: grid; grid-template-columns: 140px minmax(0, 1fr); border-top: 1px solid var(--line); }
+.rows { margin: 8px 0 32px; display: grid; grid-template-columns: 180px minmax(0, 1fr); border-top: 1px solid var(--line); }
 .rows dt, .rows dd { margin: 0; padding: 20px 0; border-bottom: 1px solid var(--line); }
-.rows dt { font-weight: 600; font-size: 20px; }
+.rows dt { font-weight: 600; font-size: var(--model-name-size); line-height: 1.2; letter-spacing: -0.01em; color: var(--gold-text); }
 .rows dt span { display: block; font-weight: 400; font-size: 14px; color: var(--faint); }
 .rows dd { color: var(--muted); font-size: var(--layer-text-size); line-height: 1.65; }
 .rows dd em { color: var(--text); }
