@@ -54,7 +54,7 @@
     items.forEach((item) => watch.observe(item));
   }
 
-  // A soft light follows the pointer, and the big mask leans towards it.
+  // A soft light follows the pointer.
   if (!still && matchMedia('(pointer: fine)').matches) {
     let frame = 0;
     let x = 0;
@@ -67,8 +67,6 @@
           frame = 0;
           root.style.setProperty('--mx', `${x}px`);
           root.style.setProperty('--my', `${y}px`);
-          root.style.setProperty('--lean-x', (y / innerHeight - 0.5).toFixed(3));
-          root.style.setProperty('--lean-y', (x / innerWidth - 0.5).toFixed(3));
         });
       }
     }, { passive: true });
