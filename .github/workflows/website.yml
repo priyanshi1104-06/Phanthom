@@ -1,0 +1,60 @@
+# The Phantom website: checked on every pull request that touches it, published when it reaches main.
+# Publishing needs three repository variables (Settings > Secrets and variables > Actions > Variables), from the
+# outputs of the CloudFormation stack in website/infra: AWS_DEPLOY_ROLE_ARN, SITE_BUCKET, SITE_DISTRIBUTION_ID.
+# No AWS keys are stored anywhere: the job gets short-lived credentials through GitHub's OIDC token.
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths: ["website/**", ".github/workflows/website.yml", "tests/test_website.py"]
+  pull_request:
+    paths: ["website/**", ".github/workflows/website.yml", "tests/test_website.py"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build and test the site
+        run: |
+          python website/build.py
+          python -m unittest tests.test_website -v
+
+  publish:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: website-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build (refuses to publish without the details in website/site.json)
+        run: python website/build.py --release
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Upload and refresh the CDN
+        env:
+          BUCKET: ${{ vars.SITE_BUCKET }}
+          DISTRIBUTION: ${{ vars.SITE_DISTRIBUTION_ID }}
+        run: |
+          aws s3 sync website/dist "s3://$BUCKET" --delete --exclude "*.html" --cache-control "public, max-age=86400"
+          aws s3 sync website/dist "s3://$BUCKET" --delete --exclude "*" --include "*.html" \
+            --cache-control "public, max-age=0, must-revalidate"
+          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" --paths "/*"

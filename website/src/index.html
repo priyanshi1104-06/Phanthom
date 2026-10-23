@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phantom — Code, unmasked</title>
+  <meta name="description" content="Phantom checks your code while you write it, and every bug it reports comes with the input that triggers it. For VS Code: Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby and PHP.">
+  <link rel="canonical" href="{{site_url}}/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Phantom — Code, unmasked">
+  <meta property="og:description" content="Bugs found while you type, each one proven by running it.">
+  <meta property="og:url" content="{{site_url}}/">
+  <meta property="og:image" content="{{site_url}}/assets/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#0b0b0d" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f8f6f1" media="(prefers-color-scheme: light)">
+  <link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="assets/favicon-16.png" sizes="16x16" type="image/png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="preload" href="assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="#" aria-label="Phantom home">
+        <img src="assets/mark.svg" alt="" width="26" height="26">
+        <span class="word">PHANTOM<span>.AI</span></span>
+      </a>
+      <a class="button primary small" href="{{cta_href}}">{{cta_label}}</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="hero">
+      <div class="wrap">
+        <h1>Code, unmasked.</h1>
+        <p class="lead">Phantom checks your code while you write it. When it says a function is broken, it shows
+          you the exact input that breaks it, because it has already run it.</p>
+        <div class="actions">
+          <a class="button primary" href="{{cta_href}}">{{cta_label}}</a>
+          <a class="textlink" href="#how">How it works</a>
+        </div>
+
+        <figure class="shot" aria-label="Phantom in VS Code: a wrong result and a crash, each with its input">
+          <div class="bar"><i></i><i></i><i></i><span>samples/intent/intent.py</span></div>
+<pre class="code"><span class="lens"><em>⚑</em> Phantom: wrong result, expected False  ▶ Replay is_leap_year(1900)</span><span class="ln">8</span><span class="wave"><b class="k">def</b> <b class="f">is_leap_year</b>(year: <b class="t">int</b>) -&gt; <b class="t">bool</b>:</span>
+<span class="ln">9</span>    <b class="s">"""True for leap years in the Gregorian calendar.</b>
+<span class="ln">10</span>
+<span class="ln">11</span>    <b class="s">&gt;&gt;&gt; is_leap_year(1900)</b>
+<span class="ln">12</span>    <b class="s">False</b>
+<span class="ln">13</span>    <b class="s">"""</b>
+<span class="ln">14</span>    <b class="k">return</b> year % <b class="n">4</b> == <b class="n">0</b>
+<span class="ln">15</span>
+<span class="lens"><em>⚑</em> Phantom: confirmed IndexError  ▶ Replay median([])</span><span class="ln">34</span><b class="k">def</b> <b class="f">median</b>(values: <b class="t">list</b>[<b class="t">int</b>]) -&gt; <b class="t">float</b>:
+<span class="ln">35</span>    <b class="s">"""The middle value of a non-empty list."""</b>
+<span class="ln">36</span>    ordered = sorted(values)
+<span class="ln">37</span>    <span class="wave"><b class="k">return</b> float(ordered[len(ordered) // <b class="n">2</b>])</span></pre>
+          <div class="panel">
+            <h3>Phantom</h3>
+            <div class="bubble"><strong>Phantom</strong>I checked 5 functions. 1 input the types allow makes the code fail; 3 calls give a wrong result.</div>
+            <div class="card">
+              <div class="head">Wrong result in is_leap_year <small>line 8</small></div>
+              <code>is_leap_year(1900)</code>
+              <p>Returned True, expected False.</p>
+              <p class="why">Why: the code's own example says so.</p>
+            </div>
+            <div class="card">
+              <div class="head">Confirmed bug in median <small>line 37</small></div>
+              <code>median([])</code>
+              <p>Raises IndexError: list index out of range</p>
+              <p class="why">Replayed in a fresh sandbox before it was shown.</p>
+            </div>
+          </div>
+        </figure>
+      </div>
+    </div>
+
+    <section id="how">
+      <div class="wrap prose">
+        <h2>It doesn't guess.</h2>
+        <p>Each time you stop typing, Phantom takes the functions you just changed and calls them with the inputs
+          that tend to break code: an empty list, zero, a negative number, an empty string. Every call runs in a
+          throwaway container with no network and no way to reach your files.</p>
+        <p>When a call fails, Phantom runs it again on its own, in a new container. Only if it fails the same way
+          does it reach your editor, with the input, the error and a button to replay it once you've fixed the
+          code. A warning you can't reproduce isn't worth your time, so you never see one.</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap prose">
+        <h2>It catches the wrong answers too.</h2>
+        <p>Some bugs never crash. <code>is_leap_year(1900)</code> returns <code>True</code> and carries on as if
+          nothing happened. Phantom reads the examples you already write in comments and docstrings and holds the
+          code to them. With its AI turned on, it also reads what each function is meant to do and checks that,
+          quoting the line in your code it relied on, so you can judge for yourself.</p>
+        <p>Change a function and it re-checks everything that calls it, so a fix in one place that quietly breaks
+          another shows up where the damage is.</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap prose">
+        <h2>Three layers, from quick to thorough.</h2>
+        <dl class="rows">
+          <dt>Specter</dt>
+          <dd>Runs on every pause in typing and takes about a second per function. Crashes, hangs, and values a
+            function's own types say it can't return.</dd>
+          <dt>Analyst</dt>
+          <dd>Runs when you open or save a file, or make a risky edit. Wrong answers, and callers an edit has
+            broken.</dd>
+          <dt>Oracle <span>next</span></dt>
+          <dd>For the riskiest changes: an agent in the sandbox that writes tests, digs deeper and proves a fix
+            works before you apply it. It's the next thing we're building.</dd>
+        </dl>
+        <p>Phantom works in Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby and PHP, using each
+          language's real compiler or runtime.</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap prose">
+        <h2>What happens to your code.</h2>
+        <p>It stays on your machine. Phantom's engine and its sandboxes run on your own computer. The AI is
+          optional: without it, Phantom still finds and proves bugs; with it on, the function being checked is sent
+          to the model so it can suggest inputs and read the intent.</p>
+        <p>And Phantom will never tell you your code is bug-free. When it finds nothing, it says exactly that: none
+          of the inputs it tried made your code fail.</p>
+      </div>
+    </section>
+
+    <section id="early-access">
+      <div class="wrap prose">
+        <h2>Try it.</h2>
+        <p>Phantom is free while it's in early access. It runs in VS Code and needs Docker and Python 3 on your
+          machine.</p>
+        <div class="actions">
+          <a class="button primary" href="{{cta_href}}">{{cta_label}}</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <a class="brand" href="#" aria-label="Phantom home">
+        <img src="assets/mark.svg" alt="" width="22" height="22">
+        <span class="word">PHANTOM<span>.AI</span></span>
+      </a>
+      <span>© 2026 Phantom{{contact_footer}}</span>
+    </div>
+  </footer>
+</body>
+</html>
