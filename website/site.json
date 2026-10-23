@@ -2,5 +2,6 @@
   "site_url": "",
   "contact_email": "",
   "marketplace_url": "",
-  "signin_url": ""
+  "auth_domain": "",
+  "auth_client_id": ""
 }

@@ -8,6 +8,7 @@
   <link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="assets/favicon-16.png" sizes="16x16" type="image/png">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  {{auth_meta}}
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -24,10 +25,11 @@
     <div class="signin-card">
       <img class="signin-mark" src="assets/mark.svg" alt="" width="44" height="44">
       <h1>Sign in to Phantom</h1>
-      <p>Your account connects the VS Code extension, your plan and your usage.</p>
+      <p>Sign in with Google to get Phantom early access for VS Code. It's free while in early access.</p>
       {{google_button}}
       <p class="signin-note">{{signin_note}}</p>
     </div>
   </main>
+  <script src="assets/auth.js" defer></script>
 </body>
 </html>

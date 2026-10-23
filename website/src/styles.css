@@ -133,7 +133,7 @@ code, kbd { font-family: var(--mono); font-size: 0.9em; }
 .textlink:hover { color: var(--text); }
 .textlink::after { content: " \2193"; }
 .button.small { padding: 11px 22px; font-size: var(--signin-size); }
-.button.ghost { border-color: var(--line-strong); color: var(--text); }
+.button.ghost { border-color: var(--line-strong); color: var(--text); background: transparent; }
 .button.ghost:hover { background: var(--bg-raised); }
 
 /* ---------- hero ---------- */
@@ -282,6 +282,21 @@ main, footer { position: relative; z-index: 1; }
   .intro, .glow { display: none; }
   .js .rise, .js .reveal { opacity: 1; transform: none; transition: none; }
 }
+
+.account-actions { display: flex; justify-content: center; gap: 12px; margin-top: 8px; }
+.account-card { max-width: 560px; }
+.install { margin: 8px 0 32px; padding: 0; list-style: none; counter-reset: step; text-align: left; border-top: 1px solid var(--line); }
+.install li { counter-increment: step; position: relative; padding: 18px 0 18px 44px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 16px; line-height: 1.6; }
+.install li::before { content: counter(step); position: absolute; left: 0; top: 17px; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line-strong); color: var(--gold-text); font: 500 14px/28px var(--mono); text-align: center; }
+.install li strong { color: var(--text); }
+.install .button { margin-top: 10px; }
+.install code { font-variant-ligatures: none; }
+.install .command { display: block; margin-top: 10px; padding: 10px 12px; overflow-x: auto; white-space: nowrap; }
+.install code { color: var(--text); font-size: 0.85em; padding: 2px 6px; border-radius: 6px; background: var(--bg-raised); border: 1px solid var(--line); }
+.policy { padding-top: 72px; padding-bottom: 96px; }
+.policy h1 { max-width: none; font-size: clamp(36px, 5vw, 52px); margin-bottom: 8px; }
+.policy h2 { margin-top: 48px; font-size: 26px; }
+[hidden] { display: none !important; }
 
 /* ---------- footer ---------- */
 

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your account — Phantom</title>
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="assets/favicon-16.png" sizes="16x16" type="image/png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  {{auth_meta}}
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="./" aria-label="Phantom home">
+        <img src="assets/mark.svg" alt="" width="26" height="26">
+        <span class="word">PHANTOM<span>.AI</span></span>
+      </a>
+    </div>
+  </header>
+
+  <main class="wrap signin">
+    <div class="signin-card account-card" id="account">
+      <img class="signin-mark" src="assets/mark.svg" alt="" width="44" height="44">
+      <div data-state="wait">
+        <h1>Signing you in…</h1>
+        <p>One moment.</p>
+      </div>
+      <div data-state="in" hidden>
+        <h1>You're in<span data-field="name"></span>.</h1>
+        <p>Phantom early access is yours, signed in as <strong data-field="email"></strong>.</p>
+        {{install_steps}}
+        <div class="account-actions">
+          <button class="button ghost" type="button" data-auth="signout">Sign out</button>
+        </div>
+      </div>
+      <div data-state="error" hidden>
+        <h1>Sign-in didn't finish</h1>
+        <p data-field="problem"></p>
+        <div class="account-actions"><a class="button primary" href="signin.html">Try again</a></div>
+      </div>
+    </div>
+  </main>
+  <script src="assets/auth.js" defer></script>
+</body>
+</html>

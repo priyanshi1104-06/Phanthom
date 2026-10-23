@@ -4,6 +4,8 @@ without the project's packages)."""
 import importlib.util
 import json
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from html.parser import HTMLParser
@@ -74,11 +76,46 @@ class WebsiteTest(unittest.TestCase):
 
     def test_the_main_button_follows_the_details(self):
         index = (self.built() / "index.html").read_text()
-        self.assertIn('href="mailto:hello@phantom.example?subject=Phantom%20early%20access"', index)
+        self.assertIn('<a class="button primary" href="signin.html">Request early access</a>', index)
         listing = "https://marketplace.visualstudio.com/items?itemName=phantom.phantom"
         index = (self.built({**SITE, "marketplace_url": listing}) / "index.html").read_text()
         self.assertIn("Install for VS Code", index)
         self.assertIn(f'href="{listing}"', index)
+
+    def test_the_account_page_leads_into_vs_code(self):
+        folder = Path(tempfile.mkdtemp())
+        package = folder / "phantom-9.8.7.vsix"
+        package.write_bytes(b"PK")
+        out = folder / "dist"
+        self.assertEqual(build.main(["--site", str(site_file(SITE, folder)), "--out", str(out), "--vsix", str(package)]), 0)
+        account = (out / "account.html").read_text()
+        self.assertIn('href="download/phantom-9.8.7.vsix" download', account)
+        self.assertEqual((out / "download" / "phantom-9.8.7.vsix").read_bytes(), b"PK")
+        self.assertIn("code --install-extension phantom-9.8.7.vsix", account)
+        self.assertIn("Phantom: Set Up", account)
+        self.assertIn("the download appears here shortly", build.install_steps(SITE, None))
+        listing = "https://marketplace.visualstudio.com/items?itemName=phantom.phantom"
+        self.assertIn(f'href="{listing}"', build.install_steps({**SITE, "marketplace_url": listing}, package))
+
+    def test_sign_in_is_off_until_cognito_is_set_up(self):
+        signin = (self.built() / "signin.html").read_text()
+        self.assertIn('<meta name="phantom-auth" content="">', signin)
+        self.assertIn('<span class="button google" aria-disabled="true">', signin)
+        live = {**SITE, "auth_domain": "phantom-ai.auth.us-east-1.amazoncognito.com", "auth_client_id": "abc123"}
+        signin = (self.built(live) / "signin.html").read_text()
+        self.assertIn('content="phantom-ai.auth.us-east-1.amazoncognito.com|abc123"', signin)
+        self.assertIn('data-auth="signin"', signin)
+        self.assertEqual(build.problems({**live, "auth_client_id": ""}, False),
+                         ["auth_domain and auth_client_id go together: fill in both, or neither"])
+
+    @unittest.skipUnless(shutil.which("node"), "needs Node.js")
+    def test_pkce_matches_rfc_7636(self):
+        script = (WEBSITE / "src" / "assets" / "auth.js").read_text()
+        body = script[script.index("  const base64url"):script.index("  const callback")]
+        check = ("(async () => {" + body + "console.log(await challengeFor("
+                 "'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'), randomString().length); })();")
+        out = subprocess.run(["node", "-e", check], capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(out, ["E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "64"])
 
     def test_a_release_needs_every_detail(self):
         folder = tempfile.mkdtemp()

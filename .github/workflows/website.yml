@@ -7,7 +7,7 @@ name: Website
 on:
   push:
     branches: [main]
-    paths: ["website/**", ".github/workflows/website.yml", "tests/test_website.py"]
+    paths: ["website/**", "extension/**", ".github/workflows/website.yml", "tests/test_website.py"]
   pull_request:
     paths: ["website/**", ".github/workflows/website.yml", "tests/test_website.py"]
   workflow_dispatch:
@@ -43,6 +43,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - name: Package the VS Code extension (the account page offers it for download)
+        working-directory: extension
+        run: |
+          npm ci
+          npm run package
       - name: Build (refuses to publish without the details in website/site.json)
         run: python website/build.py --release
       - uses: aws-actions/configure-aws-credentials@v4

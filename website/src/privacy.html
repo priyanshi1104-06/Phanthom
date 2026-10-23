@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy — Phantom</title>
+  <link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="assets/favicon-16.png" sizes="16x16" type="image/png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  {{auth_meta}}
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="./" aria-label="Phantom home">
+        <img src="assets/mark.svg" alt="" width="26" height="26">
+        <span class="word">PHANTOM<span>.AI</span></span>
+      </a>
+    </div>
+  </header>
+
+  <main class="wrap prose policy">
+    <h1>Privacy</h1>
+    <p>Last updated 23 October 2026.</p>
+
+    <h2>Your code</h2>
+    <p>Phantom's engine and its sandboxes run on your own computer. Your code is not uploaded to Phantom. If you turn
+      on Phantom's AI features, the code being checked is sent to the AI model provider to suggest inputs and read
+      what a function is meant to do. You can use Phantom with the AI off.</p>
+
+    <h2>Your account</h2>
+    <p>When you sign in with Google, Phantom receives your <strong>name</strong> and <strong>email address</strong>
+      from Google, and nothing else: not your password, contacts or files. They are stored in Amazon Cognito, in
+      Amazon Web Services' US East (N. Virginia) region, and used to run your account and early access, and to email
+      you about Phantom. Phantom does not sell them or share them for advertising.</p>
+
+    <h2>This website</h2>
+    <p>The website uses no cookies, no analytics and no trackers. Fonts and images are served from the site itself.
+      Signing in keeps a sign-in token in your browser tab until you close it or sign out.</p>
+
+    <h2>Deleting your data</h2>
+    <p>To delete your account and everything stored with it, {{contact_line}}</p>
+  </main>
+  <footer>
+    <div class="wrap">
+      <a class="brand" href="./" aria-label="Phantom home">
+        <img src="assets/mark.svg" alt="" width="22" height="22">
+        <span class="word">PHANTOM<span>.AI</span></span>
+      </a>
+      <span>© 2026 Phantom · <a href="privacy.html">Privacy</a>{{contact_footer}}</span>
+    </div>
+  </footer>
+</body>
+</html>

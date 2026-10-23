@@ -7,8 +7,10 @@ site.json:
     site_url         "https://phantom.example" (no trailing slash): canonical links, the sitemap, the share image
     contact_email    where "Request early access" writes to, and the footer
     marketplace_url  the VS Code Marketplace listing; when set, the main button becomes "Install for VS Code"
-    signin_url       where "Continue with Google" starts the sign-in (Phantom Cloud); empty: the button says
-                     accounts are coming, and does nothing
+    auth_domain      the Cognito sign-in domain (stack output AuthDomain), e.g. phantom-ai.auth.us-east-1.amazoncognito.com
+    auth_client_id   the Cognito app client (stack output AuthClientId)
+                     Both empty: "Continue with Google" says accounts are coming, and does nothing.
+"Request early access" leads to the sign-in page: signing in is joining early access.
 """
 import argparse
 import html
@@ -17,16 +19,15 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent
-PAGES = ("index.html", "technical.html", "signin.html", "404.html")
+PAGES = ("index.html", "technical.html", "signin.html", "account.html", "privacy.html", "404.html")
 
 
 def load(path):
     site = json.loads(Path(path).read_text())
     return {key: str(site.get(key, "")).strip()
-            for key in ("site_url", "contact_email", "marketplace_url", "signin_url")}
+            for key in ("site_url", "contact_email", "marketplace_url", "auth_domain", "auth_client_id")}
 
 
 def problems(site, release):
@@ -37,8 +38,12 @@ def problems(site, release):
         found.append("contact_email doesn't look like an email address")
     if site["marketplace_url"] and not site["marketplace_url"].startswith("https://marketplace.visualstudio.com/"):
         found.append("marketplace_url must be a https://marketplace.visualstudio.com/ link")
-    if site.get("signin_url") and not site["signin_url"].startswith("https://"):
-        found.append("signin_url must be an https:// link")
+    if site.get("auth_domain") and not re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", site["auth_domain"]):
+        found.append("auth_domain must be a host name like phantom-ai.auth.us-east-1.amazoncognito.com (no https://)")
+    if site.get("auth_client_id") and not re.fullmatch(r"[a-z0-9]+", site["auth_client_id"]):
+        found.append("auth_client_id must be the app client id (letters and digits)")
+    if bool(site.get("auth_domain")) != bool(site.get("auth_client_id")):
+        found.append("auth_domain and auth_client_id go together: fill in both, or neither")
     if release:
         found += [f"{key} is empty in website/site.json" for key in ("site_url", "contact_email") if not site[key]]
     return found
@@ -48,27 +53,63 @@ def values(site):
     email = site["contact_email"]
     if site["marketplace_url"]:
         cta_href, cta_label = site["marketplace_url"], "Install for VS Code"
-    elif email:
-        cta_href, cta_label = f"mailto:{email}?subject={quote('Phantom early access')}", "Request early access"
     else:
-        cta_href, cta_label = "#early-access", "Request early access"
+        cta_href, cta_label = "signin.html", "Request early access"
     footer = f' · <a href="mailto:{html.escape(email)}">{html.escape(email)}</a>' if email else ""
+    contact = (f'write to <a href="mailto:{html.escape(email)}">{html.escape(email)}</a> from the address you signed in '
+               "with. It is deleted within 30 days." if email else "use the contact address on this page.")
     google = '<img src="assets/google.svg" alt="" width="20" height="20">Continue with Google'
-    if site.get("signin_url"):
-        button = f'<a class="button google" href="{html.escape(site["signin_url"])}">{google}</a>'
-        note = "Phantom only receives your name and email address from Google."
+    signin = bool(site.get("auth_domain") and site.get("auth_client_id"))
+    if signin:  # auth.js turns the button on
+        button = f'<button class="button google" type="button" data-auth="signin" aria-disabled="true">{google}</button>'
+        note = ('Signing in adds you to the early access list. Phantom receives only your name and email address '
+                'from Google. <a href="privacy.html">Privacy</a>')
+        meta = (f'<meta name="phantom-auth" content="{html.escape(site["auth_domain"])}|'
+                f'{html.escape(site["auth_client_id"])}">')
     else:
         button = f'<span class="button google" aria-disabled="true">{google}</span>'
-        note = "Accounts open with Phantom Cloud, coming soon. Until then, Phantom runs on your machine without one."
+        note = "Accounts open soon. Until then, Phantom runs on your machine without one."
+        meta = '<meta name="phantom-auth" content="">'
     return {"site_url": html.escape(site["site_url"]), "cta_href": html.escape(cta_href), "cta_label": cta_label,
-            "contact_footer": footer, "google_button": button, "signin_note": note}
+            "contact_footer": footer, "contact_line": contact, "google_button": button, "signin_note": note,
+            "auth_meta": meta}
 
 
-def build(site, out):
+def newest_vsix():
+    """The extension package to offer for download: the newest extension/phantom-X.Y.Z.vsix, or None."""
+    def version(path):
+        return tuple(int(n) for n in re.findall(r"\d+", path.stem))
+    found = sorted((ROOT.parent / "extension").glob("phantom-*.vsix"), key=version)
+    return found[-1] if found else None
+
+
+def install_steps(site, vsix):
+    """The account page's steps from signing in to using Phantom in VS Code."""
+    if site["marketplace_url"]:
+        first = ('<li><strong>Install Phantom</strong> from the VS Code Marketplace.<br>'
+                 f'<a class="button primary" href="{html.escape(site["marketplace_url"])}">Install for VS Code</a></li>')
+    elif vsix:
+        first = (f'<li><strong>Download Phantom</strong> for VS Code.<br><a class="button primary" '
+                 f'href="download/{html.escape(vsix.name)}" download>Download {html.escape(vsix.stem)}.vsix</a></li>'
+                 '<li><strong>Install it</strong>: in VS Code, Extensions &gt; &middot;&middot;&middot; &gt; Install from VSIX,'
+                 f' and pick the file. Or in a terminal:'
+                 f'<code class="command">code --install-extension {html.escape(vsix.name)}</code></li>')
+    else:
+        first = '<li><strong>Download Phantom</strong> for VS Code: the download appears here shortly.</li>'
+    return ('<ol class="install">' + first + '<li><strong>Set it up once</strong>: press Ctrl+Shift+P and run '
+            '<code>Phantom: Set Up</code>. It needs Docker and Python 3 on your machine.</li>'
+            '<li><strong>Write code.</strong> Open any file in a supported language: Phantom checks it as you type.</li>'
+            '</ol>')
+
+
+def build(site, out, vsix=None):
     if out.exists():
         shutil.rmtree(out)
     shutil.copytree(ROOT / "src", out)
-    fill = values(site)
+    if vsix:
+        (out / "download").mkdir()
+        shutil.copyfile(vsix, out / "download" / vsix.name)
+    fill = {**values(site), "install_steps": install_steps(site, vsix)}
     for page in PAGES:
         text = (out / page).read_text()
         text = re.sub(r"\{\{(\w+)\}\}", lambda m: fill[m.group(1)], text)
@@ -88,13 +129,15 @@ def main(argv=None):
     parser.add_argument("--release", action="store_true", help="refuse to build without every detail")
     parser.add_argument("--site", default=ROOT / "site.json", help="details file (default website/site.json)")
     parser.add_argument("--out", default=ROOT / "dist", type=Path, help="output folder (default website/dist)")
+    parser.add_argument("--vsix", type=Path, help="extension package to offer (default: newest extension/*.vsix)")
     args = parser.parse_args(argv)
     site = load(args.site)
     found = problems(site, args.release)
     if found:
         print("website/site.json:\n  " + "\n  ".join(found), file=sys.stderr)
         return 1
-    print(f"built {build(site, args.out)}")
+    vsix = args.vsix or newest_vsix()
+    print(f"built {build(site, args.out, vsix)}" + (f" (offers {vsix.name})" if vsix else " (no extension package to offer)"))
     return 0
 
 
