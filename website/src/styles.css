@@ -124,6 +124,7 @@ h1 {
 }
 
 .lead { margin: 22px 0 0; max-width: 40em; font-size: clamp(18px, 2.1vw, 21px); color: var(--muted); }
+.lead strong, .prose strong { color: var(--text); font-weight: 600; }
 
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin-top: 32px; }
 
@@ -183,12 +184,17 @@ section { padding: 96px 0; border-top: 1px solid var(--line); }
 .rows dt { font-weight: 600; font-size: 18px; }
 .rows dt span { display: block; font-weight: 400; font-size: 14px; color: var(--faint); }
 .rows dd { color: var(--muted); font-size: 17px; line-height: 1.65; }
+.rows dd em { color: var(--text); }
 
 @media (max-width: 600px) {
   .rows { grid-template-columns: 1fr; }
   .rows dt { padding-bottom: 4px; border-bottom: 0; }
   .rows dd { padding-top: 0; }
 }
+
+.finale { padding: 128px 0; }
+.finale h2 { max-width: 16ch; font-size: clamp(36px, 5vw, 60px); line-height: 1.06; letter-spacing: -0.03em; }
+.finale h2 strong { color: var(--gold-text); font-weight: 600; }
 
 /* ---------- footer ---------- */
 

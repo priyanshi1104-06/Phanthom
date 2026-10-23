@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent
-PAGES = ("index.html", "404.html")
+PAGES = ("index.html", "technical.html", "404.html")
 
 
 def load(path):
