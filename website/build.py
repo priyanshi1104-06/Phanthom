@@ -5,12 +5,15 @@
 
 site.json:
     site_url         "https://phantom.example" (no trailing slash): canonical links, the sitemap, the share image
-    contact_email    where "Request early access" writes to, and the footer
+    contact_email    the footer and the privacy page (deletion requests)
     marketplace_url  the VS Code Marketplace listing; when set, the main button becomes "Install for VS Code"
     auth_domain      the Cognito sign-in domain (stack output AuthDomain), e.g. phantom-ai.auth.us-east-1.amazoncognito.com
     auth_client_id   the Cognito app client (stack output AuthClientId)
                      Both empty: "Continue with Google" says accounts are coming, and does nothing.
-"Request early access" leads to the sign-in page: signing in is joining early access.
+Without a Marketplace listing, the main button ("Get Phantom for VS Code") leads to the sign-in page: signing in
+is joining early access, and the account page offers the download at once.
+
+A screen recording at src/assets/demo.mp4 (or --demo PATH) replaces the illustrated editor on the home page.
 """
 import argparse
 import html
@@ -54,7 +57,7 @@ def values(site):
     if site["marketplace_url"]:
         cta_href, cta_label = site["marketplace_url"], "Install for VS Code"
     else:
-        cta_href, cta_label = "signin.html", "Request early access"
+        cta_href, cta_label = "signin.html", "Get Phantom for VS Code"
     footer = f' · <a href="mailto:{html.escape(email)}">{html.escape(email)}</a>' if email else ""
     contact = (f'write to <a href="mailto:{html.escape(email)}">{html.escape(email)}</a> from the address you signed in '
                "with. It is deleted within 30 days." if email else "use the contact address on this page.")
@@ -102,10 +105,20 @@ def install_steps(site, vsix):
             '</ol>')
 
 
-def build(site, out, vsix=None):
+DEMO_VIDEO = ('<figure class="shot demo rise" aria-label="Phantom in VS Code catching a bug, then replaying it">'
+              '<video src="assets/demo.mp4" autoplay muted loop playsinline preload="auto"></video></figure>')
+
+
+def build(site, out, vsix=None, demo=None):
     if out.exists():
         shutil.rmtree(out)
     shutil.copytree(ROOT / "src", out)
+    demo = demo or (ROOT / "src" / "assets" / "demo.mp4")
+    if demo.is_file():  # the real recording instead of the illustrated editor
+        if demo.resolve() != (out / "assets" / "demo.mp4").resolve():
+            shutil.copyfile(demo, out / "assets" / "demo.mp4")
+        index = out / "index.html"
+        index.write_text(re.sub(r"<!-- demo:.*?<!-- /demo -->", DEMO_VIDEO, index.read_text(), flags=re.S))
     if vsix:
         (out / "download").mkdir()
         shutil.copyfile(vsix, out / "download" / vsix.name)
@@ -130,6 +143,7 @@ def main(argv=None):
     parser.add_argument("--site", default=ROOT / "site.json", help="details file (default website/site.json)")
     parser.add_argument("--out", default=ROOT / "dist", type=Path, help="output folder (default website/dist)")
     parser.add_argument("--vsix", type=Path, help="extension package to offer (default: newest extension/*.vsix)")
+    parser.add_argument("--demo", type=Path, help="screen recording for the home page (default: src/assets/demo.mp4)")
     args = parser.parse_args(argv)
     site = load(args.site)
     found = problems(site, args.release)
@@ -137,7 +151,7 @@ def main(argv=None):
         print("website/site.json:\n  " + "\n  ".join(found), file=sys.stderr)
         return 1
     vsix = args.vsix or newest_vsix()
-    print(f"built {build(site, args.out, vsix)}" + (f" (offers {vsix.name})" if vsix else " (no extension package to offer)"))
+    print(f"built {build(site, args.out, vsix, args.demo)}" + (f" (offers {vsix.name})" if vsix else " (no extension package to offer)"))
     return 0
 
 

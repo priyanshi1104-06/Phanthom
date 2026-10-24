@@ -76,7 +76,7 @@ class WebsiteTest(unittest.TestCase):
 
     def test_the_main_button_follows_the_details(self):
         index = (self.built() / "index.html").read_text()
-        self.assertIn('<a class="button primary" href="signin.html">Request early access</a>', index)
+        self.assertIn('<a class="button primary" href="signin.html">Get Phantom for VS Code</a>', index)
         listing = "https://marketplace.visualstudio.com/items?itemName=phantom.phantom"
         index = (self.built({**SITE, "marketplace_url": listing}) / "index.html").read_text()
         self.assertIn("Install for VS Code", index)
@@ -96,6 +96,21 @@ class WebsiteTest(unittest.TestCase):
         self.assertIn("the download appears here shortly", build.install_steps(SITE, None))
         listing = "https://marketplace.visualstudio.com/items?itemName=phantom.phantom"
         self.assertIn(f'href="{listing}"', build.install_steps({**SITE, "marketplace_url": listing}, package))
+
+    def test_a_recording_replaces_the_illustration(self):
+        index = (self.built() / "index.html").read_text()
+        self.assertIn('class="shot rise"', index)
+        self.assertNotIn("<video", index)
+        folder = Path(tempfile.mkdtemp())
+        video = folder / "recording.mp4"
+        video.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+        out = folder / "dist"
+        self.assertEqual(build.main(["--site", str(site_file(SITE, folder)), "--out", str(out), "--demo", str(video)]), 0)
+        index = (out / "index.html").read_text()
+        self.assertIn('<video src="assets/demo.mp4" autoplay muted loop playsinline', index)
+        self.assertNotIn('class="shot rise"', index)
+        self.assertNotIn("<!-- demo", index)
+        self.assertEqual((out / "assets" / "demo.mp4").read_bytes(), video.read_bytes())
 
     def test_sign_in_is_off_until_cognito_is_set_up(self):
         signin = (self.built() / "signin.html").read_text()

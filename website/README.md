@@ -65,7 +65,7 @@ publish packages the extension and puts it on the account page for download.
 
 ## Turn on Google sign-in and early access (once, about 30 minutes)
 
-How it works: **Request early access** opens the sign-in page; **Continue with Google** goes through Amazon
+How it works: **Get Phantom for VS Code** opens the sign-in page; **Continue with Google** goes through Amazon
 Cognito, which keeps the list of everyone who signed in. On their first sign-in Phantom emails them
 "You're in: Phantom early access" (Amazon SES), and they land on the account page: a download button and three
 steps to get Phantom running in VS Code. Early access is open to everyone who signs in.

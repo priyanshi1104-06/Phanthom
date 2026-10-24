@@ -52,6 +52,7 @@
           <a class="textlink" href="#layers">Explore models</a>
         </div>
 
+        <!-- demo: replaced by the screen recording when website/src/assets/demo.mp4 exists -->
         <figure class="shot rise" aria-label="Phantom in VS Code: a wrong result and a crash, each with its input">
           <div class="bar"><i></i><i></i><i></i><span>samples/intent/intent.py</span></div>
 <pre class="code"><span class="lens"><em class="dot" aria-hidden="true"></em> Phantom: wrong result, expected False  ▶ Replay is_leap_year(1900)</span><span class="ln hit">8</span><span class="wave"><b class="k">def</b> <b class="f">is_leap_year</b>(year: <b class="t">int</b>) -&gt; <b class="t">bool</b>:</span>
@@ -83,6 +84,7 @@
             </div>
           </div>
         </figure>
+        <!-- /demo -->
       </div>
     </div>
 
@@ -101,17 +103,19 @@
         <dl class="rows">
           <dt>Specter</dt>
           <dd><strong>Real-time fault detection.</strong> Triggered on every pause in typing. Derives boundary inputs
-            from declared types, extends them with model-generated inputs, and executes the full set in one hermetic
-            container per function. Failures are grouped by kind, error and line, and each group is replayed in
-            isolation. Detects exceptions, non-termination, memory-safety violations and return-type contract
-            breaches in <strong>about one second per function</strong>.</dd>
+            from declared types, optionally extends them with model-generated inputs, and executes the full set in
+            one hermetic container per function; typed Python is also fuzzed property-based. Failures are grouped
+            by kind, error and line, and each group is replayed in isolation. Detects uncaught exceptions,
+            non-termination, crashes, return-type contract breaches and, in C and C++, memory errors caught by
+            AddressSanitizer. Measured without model assistance: <strong>about one second</strong> for a function
+            with nothing to report, two to three seconds when a failure is replayed.</dd>
           <dt>Analyst</dt>
           <dd><strong>Semantic verification.</strong> Establishes what a function <em>should</em> return: from
             executable examples in its documentation, and from a model's reading of its contract, constrained to
             <strong>verbatim citations</strong> of the source. Actual and expected values pass through the same
-            type-aware harness and are compared exactly, with tolerance for floating point; a mismatch is confirmed
-            deterministic before it is reported. A <strong>call-graph dependency hash</strong> re-verifies every
-            transitive caller of an edited function.</dd>
+            type-aware harness and are compared exactly, with tolerance for floating point; a mismatch is replayed
+            in a fresh container and reported only if it returns the same wrong value again. A <strong>call-graph
+            dependency hash</strong> re-verifies every transitive caller of an edited function in the same file.</dd>
           <dt>Oracle</dt>
           <dd><strong>Phantom 0.3, upcoming.</strong> The <strong>deepest and most intelligent layer</strong>, built
             for <strong>heisenbugs</strong>: failures that depend on thread interleaving, timing and ordering, and
@@ -147,8 +151,9 @@
       <div class="wrap prose reveal">
         <h2>Local by default.</h2>
         <p>Analysis and execution run <strong>on your machine</strong>. Model assistance is optional and tiered,
-          from <strong>Swift</strong> to <strong>Deepest</strong>; when enabled, it receives only the code under
-          analysis. Phantom never certifies code as bug-free. An empty report means exactly one thing: <strong>no
+          <strong>Swift</strong>, <strong>Balanced</strong> or <strong>Deep</strong>; when enabled, it receives the
+          file under analysis, or for long files the part around the function, and nothing else from your
+          project. Phantom never certifies code as bug-free. An empty report means exactly one thing: <strong>no
           tested input failed</strong>.</p>
       </div>
     </section>
@@ -156,7 +161,7 @@
     <section id="early-access" class="finale">
       <div class="wrap prose reveal">
         <h2>The bugs Phantom runs <strong>never meet your users.</strong></h2>
-        <p>Phantom 0.2 is available in early access for VS Code.</p>
+        <p>Phantom 0.2 is available now for VS Code, free during early access.</p>
         <div class="actions">
           <a class="button primary" href="{{cta_href}}">{{cta_label}}</a>
         </div>

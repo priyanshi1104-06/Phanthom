@@ -55,6 +55,14 @@
   }
 
   // A soft light follows the pointer.
+  // The demo recording: with "reduce motion" set it waits, with controls, until it's asked to play.
+  const demo = document.querySelector('.demo video');
+  if (demo && still) {
+    demo.pause();
+    demo.removeAttribute('autoplay');
+    demo.controls = true;
+  }
+
   if (!still && matchMedia('(pointer: fine)').matches) {
     let frame = 0;
     let x = 0;
