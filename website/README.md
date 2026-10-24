@@ -5,7 +5,7 @@ images are served from the site itself.
 
 | Path | What it is |
 |---|---|
-| `src/` | the pages (`index.html`, `technical.html`, `signin.html`, `account.html`, `privacy.html`, 404), `styles.css`, fonts, icons, scripts |
+| `src/` | the pages (`index.html`, `signin.html`, `account.html`, `privacy.html`, 404), `styles.css`, fonts, icons, scripts |
 | `site.json` | your details: the site's address, the contact email, the VS Code Marketplace link, the sign-in service |
 | `build.py` | fills the details into `src/`, adds the newest `extension/phantom-*.vsix` for download, writes `dist/` |
 | `infra/phantom-website.yaml` | everything on AWS, as one CloudFormation template |

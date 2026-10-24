@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-PAGES = ("index.html", "technical.html", "signin.html", "account.html", "privacy.html", "404.html")
+PAGES = ("index.html", "signin.html", "account.html", "privacy.html", "404.html")
 
 
 def load(path):

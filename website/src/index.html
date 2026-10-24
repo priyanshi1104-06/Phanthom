@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Phantom — Code, unmasked</title>
-  <meta name="description" content="Phantom checks your code while you write it, and every bug it reports comes with the input that triggers it. For VS Code: Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby and PHP.">
+  <title>Phantom — Execution-verified bug detection</title>
+  <meta name="description" content="Phantom is an execution-verified bug detection engine for VS Code. Three analysis layers, hermetic sandboxes, ten languages. Every finding is reproduced before it is reported.">
   <link rel="canonical" href="{{site_url}}/">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Phantom — Code, unmasked">
@@ -44,11 +44,12 @@
     <div class="hero">
       <div class="wrap">
         <h1 class="rise">Code, unmasked.</h1>
-        <p class="lead rise">Phantom checks your code while you write it. When it says a function is broken, it shows
-          you the exact input that breaks it, because it has already run it.</p>
+        <p class="lead rise">Phantom is an <strong>execution-verified</strong> bug detection engine for your editor. It runs
+          every changed function against adversarial inputs in a <strong>hermetic sandbox</strong> and reports only
+          failures it can <strong>reproduce</strong>.</p>
         <div class="actions rise">
           <a class="button primary" href="{{cta_href}}">{{cta_label}}</a>
-          <a class="textlink" href="#how">How it works</a>
+          <a class="textlink" href="#layers">Explore models</a>
         </div>
 
         <figure class="shot rise" aria-label="Phantom in VS Code: a wrong result and a crash, each with its input">
@@ -85,65 +86,77 @@
       </div>
     </div>
 
-    <section id="how">
+    <section>
       <div class="wrap prose reveal">
-        <h2>It doesn't guess.</h2>
-        <p>Each time you stop typing, Phantom takes the functions you just changed and calls them with the inputs
-          that tend to break code: an empty list, zero, a negative number, an empty string. Every call runs in a
-          throwaway container with no network and no way to reach your files.</p>
-        <p>When a call fails, Phantom runs it again on its own, in a new container. Only if it fails the same way
-          does it reach your editor, with the input, the error and a button to replay it once you've fixed the
-          code. A warning you can't reproduce isn't worth your time, so you never see one.</p>
+        <h2>Execution, not inference.</h2>
+        <p>Static analysis predicts failures. Phantom <strong>executes</strong> them. Every finding is a
+          <strong>reproducible artifact</strong>: the function, the input, the observed failure, replayed in a fresh
+          container before it reaches the editor. <strong>No reproduction, no report.</strong></p>
       </div>
     </section>
 
-    <section>
+    <section id="layers">
       <div class="wrap prose reveal">
-        <h2>It catches the wrong answers too.</h2>
-        <p>Some bugs never crash. <code>is_leap_year(1900)</code> returns <code>True</code> and carries on as if
-          nothing happened. Phantom reads the examples you already write in comments and docstrings and holds the
-          code to them. With its AI turned on, it also reads what each function is meant to do and checks that,
-          quoting the line in your code it relied on, so you can judge for yourself.</p>
-        <p>Change a function and it re-checks everything that calls it, so a fix in one place that quietly breaks
-          another shows up where the damage is.</p>
-      </div>
-    </section>
-
-    <section>
-      <div class="wrap prose reveal">
-        <h2>Three layers, from quick to thorough.</h2>
+        <h2>Three layers of analysis.</h2>
         <dl class="rows">
           <dt>Specter</dt>
-          <dd>Runs on every pause in typing and takes about a second per function. Crashes, hangs, and values a
-            function's own types say it can't return.</dd>
+          <dd><strong>Real-time fault detection.</strong> Triggered on every pause in typing. Derives boundary inputs
+            from declared types, extends them with model-generated inputs, and executes the full set in one hermetic
+            container per function. Failures are grouped by kind, error and line, and each group is replayed in
+            isolation. Detects exceptions, non-termination, memory-safety violations and return-type contract
+            breaches in <strong>about one second per function</strong>.</dd>
           <dt>Analyst</dt>
-          <dd>Runs when you open or save a file, or make a risky edit. Wrong answers, and callers an edit has
-            broken.</dd>
-          <dt>Oracle <span>next</span></dt>
-          <dd>For the riskiest changes: an agent in the sandbox that writes tests, digs deeper and proves a fix
-            works before you apply it. It's the next thing we're building.</dd>
+          <dd><strong>Semantic verification.</strong> Establishes what a function <em>should</em> return: from
+            executable examples in its documentation, and from a model's reading of its contract, constrained to
+            <strong>verbatim citations</strong> of the source. Actual and expected values pass through the same
+            type-aware harness and are compared exactly, with tolerance for floating point; a mismatch is confirmed
+            deterministic before it is reported. A <strong>call-graph dependency hash</strong> re-verifies every
+            transitive caller of an edited function.</dd>
+          <dt>Oracle</dt>
+          <dd><strong>Phantom 0.3, upcoming.</strong> The <strong>deepest and most intelligent layer</strong>, built
+            for <strong>heisenbugs</strong>: failures that depend on thread interleaving, timing and ordering, and
+            disappear under observation. An autonomous agent inside the sandbox takes control of the scheduler,
+            <strong>systematically explores interleavings</strong>, records the schedule that fails and
+            <strong>replays it deterministically</strong>. Symbolic execution reaches paths no input generator
+            finds. Oracle synthesizes regression tests and verifies every proposed fix by re-execution before
+            presenting it.</dd>
         </dl>
-        <p>Phantom works in Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby and PHP, using each
-          language's real compiler or runtime.</p>
+        <p class="choose">CHOOSE YOUR PHANTOM!</p>
       </div>
     </section>
 
     <section>
       <div class="wrap prose reveal">
-        <h2>What happens to your code.</h2>
-        <p>It stays on your machine. Phantom's engine and its sandboxes run on your own computer. The AI is
-          optional: without it, Phantom still finds and proves bugs; with it on, the function being checked is sent
-          to the model so it can suggest inputs and read the intent.</p>
-        <p>And Phantom will never tell you your code is bug-free. When it finds nothing, it says exactly that: none
-          of the inputs it tried made your code fail.</p>
+        <h2>Hermetic by design.</h2>
+        <p>Every execution runs in a disposable container with <strong>no network</strong>, a <strong>read-only
+          filesystem</strong>, all Linux capabilities dropped, no privilege escalation, an unprivileged user and
+          enforced memory and time limits. Inputs are restricted to <strong>parsed literals</strong> of the target
+          language: no generated or model-supplied input can execute code of its own.</p>
       </div>
     </section>
 
-    <section id="early-access">
+    <section>
       <div class="wrap prose reveal">
-        <h2>Try it.</h2>
-        <p>Phantom is free while it's in early access. It runs in VS Code and needs Docker and Python 3 on your
-          machine.</p>
+        <h2>Ten languages. Native toolchains.</h2>
+        <p>Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby and PHP, each executed with its
+          <strong>real compiler or runtime</strong>, with sanitizers enabled for C and C++.</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap prose reveal">
+        <h2>Local by default.</h2>
+        <p>Analysis and execution run <strong>on your machine</strong>. Model assistance is optional and tiered,
+          from <strong>Swift</strong> to <strong>Deepest</strong>; when enabled, it receives only the code under
+          analysis. Phantom never certifies code as bug-free. An empty report means exactly one thing: <strong>no
+          tested input failed</strong>.</p>
+      </div>
+    </section>
+
+    <section id="early-access" class="finale">
+      <div class="wrap prose reveal">
+        <h2>The bugs Phantom runs <strong>never meet your users.</strong></h2>
+        <p>Phantom 0.2 is available in early access for VS Code.</p>
         <div class="actions">
           <a class="button primary" href="{{cta_href}}">{{cta_label}}</a>
         </div>
