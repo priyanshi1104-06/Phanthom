@@ -78,6 +78,7 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly output = vscode.window.createOutputChannel('Phantom');
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
   private readonly depthStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+  private readonly gutterDots: Record<'error' | 'warning', vscode.TextEditorDecorationType>;
   private readonly server: Backend;
   private readonly panel = new PhantomPanel((action) => void this.onPanelAction(action));
   private hasModels = false;
@@ -94,8 +95,15 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
     this.status.command = 'phantom.showOutput';
     this.depthStatus.command = 'phantom.chooseDepth';
     this.server = new Backend(context, (message) => this.log(message), () => this.config().backendUrl);
+    const dot = (name: string) => vscode.window.createTextEditorDecorationType({
+      gutterIconPath: vscode.Uri.joinPath(context.extensionUri, 'media', name), gutterIconSize: '70%',
+      overviewRulerLane: vscode.OverviewRulerLane.Left,
+    });
+    this.gutterDots = { error: dot('dot-error.svg'), warning: dot('dot-warning.svg') };
     this.disposables.push(
       this.diagnostics, this.output, this.status, this.depthStatus, this.lensesChanged, this.server, this.panel,
+      this.gutterDots.error, this.gutterDots.warning,
+      vscode.window.onDidChangeVisibleTextEditors(() => this.paintDots()),
       vscode.window.registerWebviewViewProvider(PhantomPanel.id, this.panel),
       vscode.commands.registerCommand('phantom.setUp', () => this.server.setUp().then(() => this.afterStart())),
       vscode.commands.registerCommand('phantom.setApiKey', () => this.server.askForKey().then(() => this.afterStart())),
@@ -521,11 +529,23 @@ class Phantom implements vscode.CodeLensProvider, vscode.Disposable {
   private publish(doc: vscode.TextDocument): void {
     const state = this.state(doc);
     this.diagnostics.set(doc.uri, [...state.staticDiagnostics, ...state.bugDiagnostics]);
+    this.paintDots();
     this.lensesChanged.fire();
     this.updateStatus();
   }
 
-  provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
+/** Phantom's red (or amber) dot in the gutter, beside each line it has a reproduced bug on. */
+  private paintDots(): void {
+    for (const editor of vscode.window.visibleTextEditors) {
+      const bugs = this.files.get(editor.document.uri.toString())?.bugs ?? [];
+      for (const level of ['error', 'warning'] as const) {
+        const lines = bugs.filter((bug) => bug.severity === level).map((bug) => bugLine(bug, editor.document.lineCount));
+        editor.setDecorations(this.gutterDots[level], [...new Set(lines)].map((line) => editor.document.lineAt(line).range));
+      }
+    }
+  }
+
+    provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
     const bugs = (this.files.get(doc.uri.toString())?.bugs ?? []).filter((bug) => bug.severity !== 'info');
     return bugs.map((bug) => {
       const line = toZeroBased(bug.def_line ?? bug.failure.line ?? 1, doc.lineCount);

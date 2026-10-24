@@ -2,7 +2,7 @@
   "name": "phantom",
   "displayName": "Phantom",
   "description": "Finds bugs while you type, in Python, JavaScript, TypeScript, Go, Java, C, C++, Rust, Ruby and PHP: crashes and wrong answers, each backed by an input reproduced in a sandbox.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "phantom",
   "license": "UNLICENSED",
   "private": true,

@@ -110,8 +110,11 @@ export function bugMessage(bug: ConfirmedBug): string {
   return `${label}: ${input.call} ${verb} ${failure.error}: ${failure.message}`;
 }
 
+/** Phantom's mark: a red dot on a confirmed bug, an amber one on a warning (color emoji, so it stays red in any theme). */
+export const DOT = { error: '\u{1F534}', warning: '\u{1F7E0}' } as const;
+
 export function lensTitle(bug: ConfirmedBug): string {
-  const icon = bug.severity === 'error' ? '$(bug)' : '$(warning)';
+  const icon = bug.severity === 'error' ? DOT.error : DOT.warning;
   if (isWrongResult(bug)) {
     return `${icon} Phantom: wrong result, expected ${bug.expected?.value ?? '?'}  ▶ Replay ${bug.input.call}`;
   }
@@ -199,7 +202,7 @@ export function statusText(bugs: ConfirmedBug[], sandbox: string | undefined, ri
   if (sandbox && sandbox !== 'docker') {
     parts.push('not sandboxed');
   }
-  const icon = errors ? '$(bug)' : warnings || wrong ? '$(warning)' : '$(check)';
+  const icon = errors ? DOT.error : warnings || wrong ? DOT.warning : '$(check)';
   return `${icon} Phantom${parts.length ? ': ' + parts.join(' · ') : ''}`;
 }
 

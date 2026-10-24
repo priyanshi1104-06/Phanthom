@@ -52,8 +52,8 @@ test('messages name the failing input and the assumption', () => {
   assert.equal(bugMessage(firstWord),
     "Fails if text may be null (reproduced): firstWord(null) raises TypeError: Cannot read properties of null (reading 'trim')");
   assert.match(bugMessage(scale), /scale\(INT_MAX\) crashes with signed integer overflow/);
-  assert.match(lensTitle(average), /confirmed ZeroDivisionError {2}▶ Replay average\(\[\]\)/);
-  assert.match(lensTitle(scale), /^\$\(warning\) Phantom: assumed/);
+  assert.match(lensTitle(average), /^\u{1F534} Phantom: confirmed ZeroDivisionError {2}▶ Replay average\(\[\]\)/u);
+  assert.match(lensTitle(scale), /^\u{1F7E0} Phantom: assumed/u);
 });
 
 test('squiggle goes on the failing line, clamped to the document', () => {
@@ -78,7 +78,7 @@ test('status bar: counts, risk and escalation', () => {
   const bugs = confirmedBugs(findings);
   const risk: Risk = { level: 'high', edit_level: 'high', changed: ['pay'], escalate: 'oracle',
     reasons: [{ function: 'pay', category: 'payments', evidence: ['amount', 'balance'] }] };
-  assert.equal(statusText(bugs, 'docker', risk), '$(bug) Phantom: 3 confirmed · 1 assumed · risk high → Oracle');
+  assert.equal(statusText(bugs, 'docker', risk), '\u{1F534} Phantom: 3 confirmed · 1 assumed · risk high → Oracle');
   assert.equal(statusText([], 'local'), '$(check) Phantom: not sandboxed');
   assert.equal(statusText([], 'docker', { ...risk, level: 'low', escalate: null }), '$(check) Phantom');
   assert.equal(riskText({ ...risk, escalate: null, level: 'medium' }), 'risk medium');
@@ -128,8 +128,8 @@ test('Analyst: wrong results say what was expected and why', () => {
     'the code\'s own example says so: ">>> is_leap_year(1900)"');
   assert.equal(bugMessage(vowels), 'Wrong result (reproduced): count_vowels("AEIOU") returned 0, expected 5: ' +
     'upper-case vowels count (from its docstring: "upper or lower case")');
-  assert.equal(lensTitle(vowels), '$(warning) Phantom: wrong result, expected 5  ▶ Replay count_vowels("AEIOU")');
-  assert.equal(statusText(confirmedBugs([findings[0], ...wrong]), 'docker'), '$(bug) Phantom: 1 confirmed · 2 wrong results');
+  assert.equal(lensTitle(vowels), '\u{1F7E0} Phantom: wrong result, expected 5  ▶ Replay count_vowels("AEIOU")');
+  assert.equal(statusText(confirmedBugs([findings[0], ...wrong]), 'docker'), '\u{1F534} Phantom: 1 confirmed · 2 wrong results');
   const view = panelView('intent.py', { findings: [findings[0], ...wrong] });
   assert.equal(view.message, 'I checked 3 functions. 1 input the types allow makes the code fail; 2 calls give a wrong result.');
   const card = view.cards.find((c) => c.function === 'count_vowels')!;

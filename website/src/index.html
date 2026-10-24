@@ -53,7 +53,7 @@
 
         <figure class="shot rise" aria-label="Phantom in VS Code: a wrong result and a crash, each with its input">
           <div class="bar"><i></i><i></i><i></i><span>samples/intent/intent.py</span></div>
-<pre class="code"><span class="lens"><em>⚑</em> Phantom: wrong result, expected False  ▶ Replay is_leap_year(1900)</span><span class="ln">8</span><span class="wave"><b class="k">def</b> <b class="f">is_leap_year</b>(year: <b class="t">int</b>) -&gt; <b class="t">bool</b>:</span>
+<pre class="code"><span class="lens"><em class="dot" aria-hidden="true"></em> Phantom: wrong result, expected False  ▶ Replay is_leap_year(1900)</span><span class="ln hit">8</span><span class="wave"><b class="k">def</b> <b class="f">is_leap_year</b>(year: <b class="t">int</b>) -&gt; <b class="t">bool</b>:</span>
 <span class="ln">9</span>    <b class="s">"""True for leap years in the Gregorian calendar.</b>
 <span class="ln">10</span>
 <span class="ln">11</span>    <b class="s">&gt;&gt;&gt; is_leap_year(1900)</b>
@@ -61,21 +61,21 @@
 <span class="ln">13</span>    <b class="s">"""</b>
 <span class="ln">14</span>    <b class="k">return</b> year % <b class="n">4</b> == <b class="n">0</b>
 <span class="ln">15</span>
-<span class="lens"><em>⚑</em> Phantom: confirmed IndexError  ▶ Replay median([])</span><span class="ln">34</span><b class="k">def</b> <b class="f">median</b>(values: <b class="t">list</b>[<b class="t">int</b>]) -&gt; <b class="t">float</b>:
+<span class="lens"><em class="dot" aria-hidden="true"></em> Phantom: confirmed IndexError  ▶ Replay median([])</span><span class="ln">34</span><b class="k">def</b> <b class="f">median</b>(values: <b class="t">list</b>[<b class="t">int</b>]) -&gt; <b class="t">float</b>:
 <span class="ln">35</span>    <b class="s">"""The middle value of a non-empty list."""</b>
 <span class="ln">36</span>    ordered = sorted(values)
-<span class="ln">37</span>    <span class="wave"><b class="k">return</b> float(ordered[len(ordered) // <b class="n">2</b>])</span></pre>
+<span class="ln hit">37</span>    <span class="wave"><b class="k">return</b> float(ordered[len(ordered) // <b class="n">2</b>])</span></pre>
           <div class="panel">
             <h3>Phantom</h3>
             <div class="bubble"><strong>Phantom</strong>I checked 5 functions. 1 input the types allow makes the code fail; 3 calls give a wrong result.</div>
             <div class="card">
-              <div class="head">Wrong result in is_leap_year <small>line 8</small></div>
+              <div class="head"><i class="dot" aria-hidden="true"></i>Wrong result in is_leap_year <small>line 8</small></div>
               <code>is_leap_year(1900)</code>
               <p>Returned True, expected False.</p>
               <p class="why">Why: the code's own example says so.</p>
             </div>
             <div class="card">
-              <div class="head">Confirmed bug in median <small>line 37</small></div>
+              <div class="head"><i class="dot" aria-hidden="true"></i>Confirmed bug in median <small>line 37</small></div>
               <code>median([])</code>
               <p>Raises IndexError: list index out of range</p>
               <p class="why">Replayed in a fresh sandbox before it was shown.</p>

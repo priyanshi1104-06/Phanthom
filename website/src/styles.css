@@ -176,7 +176,13 @@ h1 {
 .n { color: #e7a27c; }
 .c { color: #6e6c74; }
 .lens { display: block; padding-left: 44px; font: 12px var(--font); color: #8d8a84; }
-.lens em { font-style: normal; color: #f0605f; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #f14c4c;
+  box-shadow: 0 0 0 3px rgba(241, 76, 76, 0.16); }
+.lens .dot { margin-right: 8px; vertical-align: 1px; }
+.card .dot { margin-right: 8px; vertical-align: 1px; }
+.ln.hit { position: relative; }
+.ln.hit::before { content: ""; position: absolute; left: 2px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px;
+  border-radius: 50%; background: #f14c4c; }
 .wave { text-decoration: underline wavy #f0605f; text-decoration-thickness: 1px; text-underline-offset: 4px; }
 
 .panel { border-left: 1px solid #222228; padding: 18px 16px 22px; background: #0e0e11; font-size: 13.5px; }

@@ -69,6 +69,9 @@ export class PhantomPanel implements vscode.WebviewViewProvider, vscode.Disposab
           background: var(--vscode-editor-background); border-radius: 4px; }
   .card.warning { border-color: var(--vscode-editorWarning-foreground); }
   .card.info { border-color: var(--vscode-editorInfo-foreground); opacity: 0.85; }
+  .dot { display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; vertical-align: 1px;
+         background: #f14c4c; }
+  .warning .dot { background: #f0a030; } .info .dot { background: var(--vscode-editorInfo-foreground); }
   .head { font-weight: 600; } .line { float: right; font-weight: normal; color: var(--vscode-descriptionForeground); }
   code { display: block; margin: 6px 0; font-family: var(--vscode-editor-font-family); }
   p { margin: 4px 0; } .how, .assume { color: var(--vscode-descriptionForeground); font-size: 0.92em; }
